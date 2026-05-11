@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
 
 const userSchema = new mongoose.Schema(
   {
@@ -19,6 +20,7 @@ const userSchema = new mongoose.Schema(
     passwordHash: {
       type: String,
       required: true,
+      select: false,
     },
     role: {
       type: String,
@@ -47,5 +49,24 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+userSchema.pre('save', async function hashPasswordHash(next) {
+  if (!this.isModified('passwordHash')) {
+    return next();
+  }
+
+  // Skip if the value already looks like a bcrypt hash.
+  if (typeof this.passwordHash === 'string' && this.passwordHash.startsWith('$2')) {
+    return next();
+  }
+
+  const saltRounds = Number(process.env.BCRYPT_ROUNDS) || 12;
+  this.passwordHash = await bcrypt.hash(this.passwordHash, saltRounds);
+  return next();
+});
+
+userSchema.methods.comparePassword = function comparePassword(plainPassword) {
+  return bcrypt.compare(plainPassword, this.passwordHash);
+};
 
 module.exports = mongoose.model('User', userSchema);
