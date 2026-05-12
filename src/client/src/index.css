@@ -9,6 +9,7 @@
   --panel: #f8fbfd;
   --surface-strong: #ffffff;
   --tag: #f1f6fb;
+  --secondary-panel: #eef4fb;
   --sans: 'IBM Plex Sans', sans-serif;
   --display: 'Sora', sans-serif;
   font-family: var(--sans);
@@ -21,6 +22,18 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root[data-theme='dark'] {
+  --bg: #07111a;
+  --ink: #f4f7fa;
+  --ink-soft: #cbd5e1;
+  --ink-subtle: #94a3b8;
+  --line: #334155;
+  --panel: #0f172a;
+  --surface-strong: #111827;
+  --tag: #1e293b;
+  --secondary-panel: #152238;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -31,7 +44,8 @@ body {
   background:
     radial-gradient(circle at 0% 0%, rgba(31, 115, 185, 0.12), rgba(31, 115, 185, 0) 34%),
     radial-gradient(circle at 100% 100%, rgba(96, 135, 170, 0.12), rgba(96, 135, 170, 0) 36%),
-    linear-gradient(180deg, #f3f7fa 0%, #f7fafc 100%);
+    linear-gradient(180deg, var(--bg) 0%, var(--surface-strong) 100%);
+  color: var(--ink-soft);
 }
 
 #root {

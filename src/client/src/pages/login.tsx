@@ -1,6 +1,6 @@
 import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import axios, { type AxiosError } from 'axios'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 function resolveApiBaseUrl() {
 	const maybeMeta = (globalThis as any).import?.meta
@@ -10,6 +10,7 @@ function resolveApiBaseUrl() {
 
 function LoginPage() {
 	const location = useLocation()
+	const navigate = useNavigate()
 	const [formData, setFormData] = useState({
 		email: '',
 		password: '',
@@ -49,6 +50,7 @@ function LoginPage() {
 
 			localStorage.setItem('secureChatToken', response.data.token)
 			localStorage.setItem('secureChatUser', JSON.stringify(response.data.user))
+			navigate('/profile', { replace: true })
 			setStatus({ type: 'success', message: `Welcome back, ${response.data.user.username}.` })
 		} catch (error: unknown) {
 			const axiosError = error as AxiosError<{ message?: string }>

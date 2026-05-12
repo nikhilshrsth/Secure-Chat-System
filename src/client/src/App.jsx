@@ -1,11 +1,49 @@
-import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import LoginPage from './pages/login'
+import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
 import './App.css'
 
 function App() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const [theme, setTheme] = useState(() => localStorage.getItem('secureChatTheme') || 'light')
+  const token = useMemo(() => localStorage.getItem('secureChatToken'), [])
   const isLogin = location.pathname === '/login' || location.pathname === '/'
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('secureChatTheme', theme)
+  }, [theme])
+
+  function handleSignOut() {
+    localStorage.removeItem('secureChatToken')
+    localStorage.removeItem('secureChatUser')
+    navigate('/login', { replace: true })
+  }
+
+  if (token) {
+    return (
+      <main className="profile-shell">
+        <header className="profile-shell-header">
+          <div>
+            <p className="brand-kicker">Secure Chat</p>
+            <h1>Your workspace profile</h1>
+          </div>
+          <button type="button" className="secondary" onClick={handleSignOut}>
+            Sign out
+          </button>
+        </header>
+        <Routes>
+          <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
+          <Route path="/login" element={<Navigate to="/profile" replace />} />
+          <Route path="/register" element={<Navigate to="/profile" replace />} />
+          <Route path="*" element={<Navigate to="/profile" replace />} />
+        </Routes>
+      </main>
+    )
+  }
 
   return (
     <main className="brand-shell">
