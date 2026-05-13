@@ -28,7 +28,7 @@ function App() {
       <main className="profile-shell">
         <header className="profile-shell-header">
           <div>
-            <p className="brand-kicker">Secure Chat</p>
+            <p className="brand-kicker">Shadow Link</p>
             <h1>Your workspace profile</h1>
           </div>
           <button type="button" className="secondary" onClick={handleSignOut}>
@@ -48,20 +48,30 @@ function App() {
   return (
     <main className="brand-shell">
       <section className="brand-panel">
-        <p className="brand-kicker">Secure Chat</p>
-        <h1>Secure conversations. Clean workflow.</h1>
-        <p className="brand-copy">
-          Private messaging for teams with strong identity checks and role-based access.
-          Sign in to continue or create a new account.
-        </p>
-        <div className="brand-points" aria-label="Platform highlights">
-          <span>End-to-end encrypted</span>
-          <span>JWT protected routes</span>
-          <span>Role-based access</span>
+        <div className="brand-hero-content">
+          <img className="brand-logo" src="/shadow-link-logo.png" alt="Shadow Link" />
+          <h1 className="sr-only">Shadow Link</h1>
+          <p className="brand-copy">
+            Protected messaging for teams that need trusted identity, private conversations,
+            and a calm workspace for secure collaboration.
+          </p>
+          <div className="brand-points" aria-label="Platform highlights">
+            <span>End-to-end encrypted</span>
+            <span>JWT protected routes</span>
+            <span>Role-based access</span>
+          </div>
         </div>
       </section>
 
       <section className="auth-panel" aria-label="Authentication panel">
+        <div className="auth-brand">
+          <img src="/shadow-link-logo.png" alt="" aria-hidden="true" />
+          <div>
+            <p>Shadow Link</p>
+            <span>Secure access</span>
+          </div>
+        </div>
+
         <div className="tab-row" role="tablist" aria-label="Auth mode">
           <NavLink
             to="/login"
@@ -82,7 +92,7 @@ function App() {
         </div>
 
         <div className="auth-head">
-          <h2>{isLogin ? 'Sign in to your workspace' : 'Create your secure account'}</h2>
+          <h2>{isLogin ? 'Sign in to Shadow Link' : 'Create your Shadow Link account'}</h2>
           <p>{isLogin ? 'Use your email and password to continue.' : 'Only a few details are required to get started.'}</p>
         </div>
 

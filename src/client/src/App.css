@@ -1,29 +1,44 @@
 .brand-shell {
   min-height: 100vh;
-  width: min(980px, 100% - 2.5rem);
+  width: min(1120px, 100% - 2.5rem);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  padding: 1rem 0;
+  grid-template-columns: minmax(0, 1.12fr) minmax(360px, 0.88fr);
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.25rem 0;
 }
 
 .brand-panel,
 .auth-panel {
   border-radius: 16px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  box-shadow: 0 12px 24px rgba(10, 31, 52, 0.08);
+  border: 1px solid rgba(115, 143, 174, 0.22);
+  background: rgba(8, 14, 27, 0.86);
+  box-shadow: 0 24px 58px rgba(0, 0, 0, 0.28);
+  color: #d8e5f4;
 }
 
 .brand-panel {
   position: relative;
-  padding: 2.25rem;
+  min-height: 650px;
+  overflow: hidden;
+  padding: clamp(1.5rem, 4vw, 3.5rem);
+  display: grid;
+  place-items: center;
+  animation: fadeSlide 0.45s ease;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(99, 96, 255, 0.2), rgba(99, 96, 255, 0) 36%),
+    linear-gradient(180deg, rgba(11, 18, 33, 0.92), rgba(2, 5, 12, 0.98)),
+    #030711;
+}
+
+.brand-hero-content {
+  width: min(100%, 600px);
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 1rem;
-  animation: fadeSlide 0.45s ease;
+  align-items: center;
+  gap: clamp(1rem, 2.2vw, 1.45rem);
+  text-align: center;
 }
 
 .brand-kicker {
@@ -32,69 +47,123 @@
   font-size: 0.76rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink-subtle);
+  color: #8da6bf;
 }
 
-.brand-panel h1 {
-  margin: 0;
-  font-family: var(--display);
-  font-size: clamp(1.8rem, 2.8vw, 2.5rem);
-  line-height: 1.14;
-  color: var(--ink);
+.brand-logo {
+  display: block;
+  width: min(100%, 470px);
+  aspect-ratio: 1;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 50px rgba(74, 90, 255, 0.18));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .brand-copy {
   margin: 0;
-  max-width: 44ch;
-  color: var(--ink-soft);
+  max-width: 58ch;
+  color: #aabbd0;
+  font-size: clamp(0.94rem, 1.3vw, 1.05rem);
+  line-height: 1.65;
+  text-wrap: pretty;
 }
 
 .brand-points {
-  margin-top: 0.25rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  justify-content: center;
+  gap: 0.65rem;
+  width: min(100%, 580px);
 }
 
 .brand-points span {
-  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.2rem;
+  border: 1px solid rgba(143, 166, 205, 0.22);
   border-radius: 999px;
-  padding: 0.35rem 0.65rem;
+  padding: 0.42rem 0.82rem;
   font-size: 0.78rem;
-  color: var(--ink-subtle);
-  background: var(--tag);
+  font-weight: 600;
+  color: #c7d5e5;
+  background:
+    linear-gradient(180deg, rgba(104, 116, 255, 0.12), rgba(104, 116, 255, 0.04)),
+    rgba(12, 25, 44, 0.64);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(10px);
 }
 
 .auth-panel {
-  padding: 1.2rem;
+  padding: 1.25rem;
   display: flex;
   flex-direction: column;
   justify-content: center;
   animation: fadeSlide 0.55s ease;
+  background:
+    linear-gradient(145deg, rgba(17, 31, 53, 0.96), rgba(5, 9, 19, 0.98) 62%),
+    #07101f;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.auth-brand img {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 1px solid rgba(120, 146, 177, 0.3);
+}
+
+.auth-brand p {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  color: #f7fbff;
+}
+
+.auth-brand span {
+  display: block;
+  margin-top: 0.1rem;
+  color: #91a8c0;
+  font-size: 0.82rem;
 }
 
 .tab-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  border: 1px solid var(--line);
+  border: 1px solid rgba(120, 146, 177, 0.28);
   border-radius: 10px;
   overflow: hidden;
-  background: var(--surface-strong);
+  background: rgba(8, 18, 34, 0.9);
 }
 
 .tab {
   border: 0;
   padding: 0.65rem;
   font-weight: 600;
-  color: var(--ink-soft);
+  color: #9cb0c6;
   background: transparent;
   cursor: pointer;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .tab.active {
-  background: var(--ink);
-  color: #f5f8fb;
+  background: linear-gradient(135deg, #5164ff, #7a42ff);
+  color: #ffffff;
 }
 
 .auth-head {
@@ -104,12 +173,12 @@
 .auth-head h2 {
   margin: 0;
   font-size: 1.2rem;
-  color: var(--ink);
+  color: #f7fbff;
 }
 
 .auth-head p {
   margin: 0.25rem 0 0;
-  color: var(--ink-subtle);
+  color: #91a8c0;
   font-size: 0.88rem;
 }
 
@@ -124,24 +193,28 @@
   gap: 0.3rem;
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--ink-soft);
+  color: #c7d5e5;
 }
 
 .auth-form input {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(120, 146, 177, 0.28);
   border-radius: 9px;
   padding: 0.66rem 0.72rem;
   font-size: 0.92rem;
   font-family: var(--sans);
-  color: var(--ink);
-  background: var(--surface-strong);
+  color: #f7fbff;
+  background: rgba(9, 18, 33, 0.92);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .auth-form input:focus {
   outline: 0;
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(14, 66, 110, 0.1);
+  border-color: #7a83ff;
+  box-shadow: 0 0 0 3px rgba(122, 131, 255, 0.18);
+}
+
+.auth-form input::placeholder {
+  color: #6f8399;
 }
 
 .submit {
@@ -149,17 +222,18 @@
   border: 0;
   border-radius: 9px;
   padding: 0.7rem;
-  color: #f5f8fb;
+  color: #ffffff;
   font-size: 0.92rem;
   font-weight: 600;
   font-family: var(--display);
-  background: var(--ink);
+  background: linear-gradient(135deg, #5164ff, #7a42ff);
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .submit:hover {
   opacity: 0.92;
+  transform: translateY(-1px);
 }
 
 .submit:disabled {
@@ -175,13 +249,13 @@
 }
 
 .status.success {
-  background: rgba(56, 127, 78, 0.1);
-  color: #2a5e3c;
+  background: rgba(56, 127, 78, 0.16);
+  color: #9ee6b6;
 }
 
 .status.error {
-  background: rgba(168, 52, 52, 0.1);
-  color: #892626;
+  background: rgba(168, 52, 52, 0.16);
+  color: #ffadad;
 }
 
 .profile-shell {
@@ -353,7 +427,7 @@
   .brand-shell {
     width: min(980px, 100% - 1rem);
     grid-template-columns: 1fr;
-    gap: 0.75rem;
+    gap: 0.85rem;
     padding: 0.6rem 0;
   }
 
@@ -377,7 +451,20 @@
   }
 
   .brand-panel {
-    padding: 1.4rem 1rem;
+    min-height: auto;
+    padding: 1.35rem 1rem 1.5rem;
+  }
+
+  .brand-logo {
+    width: min(100%, 360px);
+  }
+
+  .brand-copy {
+    max-width: 46ch;
+  }
+
+  .brand-points {
+    gap: 0.5rem;
   }
 
   .auth-panel,
