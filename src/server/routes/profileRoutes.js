@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 
 const UserProfile = require('../models/UserProfile');
-const { protect } = require('../middleware/authMiddleware');
+const { protectAllowInactive } = require('../middleware/authMiddleware');
 const { profileSchema, supportedCountries, supportedLanguages } = require('../lib/profileValidation');
 
 const router = express.Router();
@@ -58,16 +58,22 @@ function removeExistingPicture(profile) {
   }
 }
 
-router.get('/', protect, async (req, res, next) => {
+function mapUser(user) {
+  return {
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+    isActive: user.isActive,
+    isTwoFactorEnabled: user.isTwoFactorEnabled,
+  };
+}
+
+router.get('/', protectAllowInactive, async (req, res, next) => {
   try {
     const profile = await UserProfile.findOne({ userId: req.user._id });
     res.status(200).json({
-      user: {
-        id: req.user._id,
-        username: req.user.username,
-        email: req.user.email,
-        role: req.user.role,
-      },
+      user: mapUser(req.user),
       profile: mapProfile(profile),
       supportedCountries,
       supportedLanguages,
@@ -77,7 +83,7 @@ router.get('/', protect, async (req, res, next) => {
   }
 });
 
-router.post('/', protect, async (req, res, next) => {
+router.post('/', protectAllowInactive, async (req, res, next) => {
   try {
     const parsed = profileSchema.parse(req.body);
 
@@ -107,7 +113,7 @@ router.post('/', protect, async (req, res, next) => {
   }
 });
 
-router.put('/', protect, async (req, res, next) => {
+router.put('/', protectAllowInactive, async (req, res, next) => {
   try {
     const parsed = profileSchema.parse(req.body);
 
@@ -136,7 +142,7 @@ router.put('/', protect, async (req, res, next) => {
   }
 });
 
-router.post('/picture', protect, upload.single('picture'), async (req, res, next) => {
+router.post('/picture', protectAllowInactive, upload.single('picture'), async (req, res, next) => {
   try {
     if (!req.file) {
       res.status(400);
@@ -159,7 +165,7 @@ router.post('/picture', protect, upload.single('picture'), async (req, res, next
   }
 });
 
-router.delete('/picture', protect, async (req, res, next) => {
+router.delete('/picture', protectAllowInactive, async (req, res, next) => {
   try {
     const profile = await UserProfile.findOne({ userId: req.user._id });
     if (!profile) {

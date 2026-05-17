@@ -44,11 +44,8 @@ app.use(
 app.use('/uploads', express.static(uploadsPath));
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
-<<<<<<< HEAD
 app.use('/api/profile', profileRoutes);
-=======
 app.use('/api/admin', adminRoutes);
->>>>>>> 9879093dd04350257a2e76107de11da601132cef
 
 app.use(notFound);
 app.use(errorHandler);

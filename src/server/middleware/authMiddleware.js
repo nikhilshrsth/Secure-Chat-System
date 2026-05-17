@@ -37,6 +37,33 @@ async function protect(req, res, next) {
   }
 }
 
+async function protectAllowInactive(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+
+  if (!authHeader.startsWith('Bearer ')) {
+    res.status(401);
+    return next(new Error('Not authorized, token missing'));
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  try {
+    const decoded = jwt.verify(token, getJwtSecret());
+    const user = await User.findById(decoded.userId).select('-passwordHash');
+
+    if (!user) {
+      res.status(401);
+      return next(new Error('Not authorized, user not found'));
+    }
+
+    req.user = user;
+    return next();
+  } catch (error) {
+    res.status(401);
+    return next(new Error('Not authorized, token invalid'));
+  }
+}
+
 function authorizeRoles(...roles) {
   return (req, res, next) => {
     if (!req.user) {
@@ -57,6 +84,7 @@ const adminOnly = authorizeRoles('admin');
 
 module.exports = {
   protect,
+  protectAllowInactive,
   authorizeRoles,
   adminOnly,
 };

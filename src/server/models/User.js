@@ -7,8 +7,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      minlength: 3,
-      maxlength: 30,
+      minlength: 2,
+      maxlength: 60,
     },
     email: {
       type: String,
@@ -21,6 +21,25 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       select: false,
+    },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    phoneNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    isPhoneVerified: {
+      type: Boolean,
+      default: false,
     },
     role: {
       type: String,
@@ -50,22 +69,25 @@ const userSchema = new mongoose.Schema(
   },
 );
 
-userSchema.pre('save', async function hashPasswordHash(next) {
+userSchema.pre('save', async function hashPasswordHash() {
   if (!this.isModified('passwordHash')) {
-    return next();
+    return;
   }
 
   // Skip if the value already looks like a bcrypt hash.
   if (typeof this.passwordHash === 'string' && this.passwordHash.startsWith('$2')) {
-    return next();
+    return;
   }
 
   const saltRounds = Number(process.env.BCRYPT_ROUNDS) || 12;
   this.passwordHash = await bcrypt.hash(this.passwordHash, saltRounds);
-  return next();
 });
 
 userSchema.methods.comparePassword = function comparePassword(plainPassword) {
+  if (!this.passwordHash) {
+    return false;
+  }
+
   return bcrypt.compare(plainPassword, this.passwordHash);
 };
 

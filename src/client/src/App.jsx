@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import LoginPage from './pages/login'
 import ProfilePage from './pages/profile'
@@ -9,7 +9,7 @@ function App() {
   const location = useLocation()
   const navigate = useNavigate()
   const [theme, setTheme] = useState(() => localStorage.getItem('secureChatTheme') || 'light')
-  const token = useMemo(() => localStorage.getItem('secureChatToken'), [])
+  const [token, setToken] = useState(() => localStorage.getItem('secureChatToken'))
   const isLogin = location.pathname === '/login' || location.pathname === '/'
 
   useEffect(() => {
@@ -17,9 +17,24 @@ function App() {
     localStorage.setItem('secureChatTheme', theme)
   }, [theme])
 
+  useEffect(() => {
+    function handleAuthChanged() {
+      setToken(localStorage.getItem('secureChatToken'))
+    }
+
+    window.addEventListener('securechat-auth-changed', handleAuthChanged)
+    window.addEventListener('storage', handleAuthChanged)
+
+    return () => {
+      window.removeEventListener('securechat-auth-changed', handleAuthChanged)
+      window.removeEventListener('storage', handleAuthChanged)
+    }
+  }, [])
+
   function handleSignOut() {
     localStorage.removeItem('secureChatToken')
     localStorage.removeItem('secureChatUser')
+    window.dispatchEvent(new Event('securechat-auth-changed'))
     navigate('/login', { replace: true })
   }
 

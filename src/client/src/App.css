@@ -241,6 +241,36 @@
   cursor: not-allowed;
 }
 
+.oauth-divider {
+  position: relative;
+  margin: 0.45rem 0 0.1rem;
+  text-align: center;
+}
+
+.oauth-divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgba(120, 146, 177, 0.28);
+}
+
+.oauth-divider span {
+  position: relative;
+  display: inline-block;
+  padding: 0 0.45rem;
+  font-size: 0.78rem;
+  color: #91a8c0;
+  background: rgba(11, 19, 36, 0.98);
+}
+
+.google-auth-button {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+}
+
 .status {
   margin: 0.1rem 0 0;
   border-radius: 8px;

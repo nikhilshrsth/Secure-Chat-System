@@ -41,10 +41,17 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [pictureLoading, setPictureLoading] = useState(false);
+  const [mfaSetupLoading, setMfaSetupLoading] = useState(false);
+  const [mfaEnableLoading, setMfaEnableLoading] = useState(false);
+  const [mfaDisableLoading, setMfaDisableLoading] = useState(false);
   const [status, setStatus] = useState({ type: '', message: '' });
   const [profile, setProfile] = useState<Record<string, any> | null>(null);
+  const [accountUser, setAccountUser] = useState<Record<string, any> | null>(null);
   const [supportedCountries, setSupportedCountries] = useState<string[]>([]);
   const [supportedLanguages, setSupportedLanguages] = useState<string[]>([]);
+  const [mfaQrCodeDataUrl, setMfaQrCodeDataUrl] = useState('');
+  const [mfaSecret, setMfaSecret] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
   const [formData, setFormData] = useState({
     dateOfBirth: '',
     alternativeEmail: '',
@@ -62,6 +69,11 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
       try {
         const response = await api.get('/api/profile');
         const data = response.data;
+        const userData = data.user || storedUser || null;
+        setAccountUser(userData);
+        if (userData) {
+          localStorage.setItem('secureChatUser', JSON.stringify(userData));
+        }
         setSupportedCountries(data.supportedCountries || []);
         setSupportedLanguages(data.supportedLanguages || []);
         if (data.profile) {
@@ -101,6 +113,79 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
     setFormData((prev) => ({ ...prev, [name]: value }));
     if (status.message) {
       setStatus({ type: '', message: '' });
+    }
+  }
+
+  async function handleGenerateMfaSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMfaSetupLoading(true);
+    setStatus({ type: '', message: '' });
+
+    try {
+      const response = await api.post('/api/auth/mfa/setup');
+      setMfaQrCodeDataUrl(response.data?.qrCodeDataUrl || '');
+      setMfaSecret(response.data?.secret || '');
+      setStatus({ type: 'success', message: response.data?.message || 'Authenticator setup created.' });
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Could not initialize MFA setup.' });
+    } finally {
+      setMfaSetupLoading(false);
+    }
+  }
+
+  async function handleEnableMfa(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMfaEnableLoading(true);
+    setStatus({ type: '', message: '' });
+
+    try {
+      const response = await api.post('/api/auth/mfa/enable', {
+        code: mfaCode,
+      });
+
+      const nextUser = response.data?.user || accountUser;
+      if (nextUser) {
+        setAccountUser(nextUser);
+        localStorage.setItem('secureChatUser', JSON.stringify(nextUser));
+        window.dispatchEvent(new Event('securechat-auth-changed'));
+      }
+
+      setMfaCode('');
+      setMfaSecret('');
+      setMfaQrCodeDataUrl('');
+      setStatus({ type: 'success', message: response.data?.message || 'Authenticator MFA enabled.' });
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Could not enable MFA.' });
+    } finally {
+      setMfaEnableLoading(false);
+    }
+  }
+
+  async function handleDisableMfa() {
+    setMfaDisableLoading(true);
+    setStatus({ type: '', message: '' });
+
+    try {
+      const response = await api.post('/api/auth/mfa/disable');
+      const nextUser = response.data?.user || accountUser;
+
+      if (nextUser) {
+        setAccountUser(nextUser);
+        localStorage.setItem('secureChatUser', JSON.stringify(nextUser));
+        window.dispatchEvent(new Event('securechat-auth-changed'));
+      }
+
+      setMfaCode('');
+      setMfaSecret('');
+      setMfaQrCodeDataUrl('');
+      setStatus({ type: 'success', message: response.data?.message || 'Authenticator MFA disabled.' });
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Could not disable MFA.' });
+    } finally {
+      setMfaDisableLoading(false);
     }
   }
 
@@ -206,10 +291,13 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
         <section className="profile-summary card">
           <h3>Account reference</h3>
           <p>
-            <strong>Username:</strong> {storedUser?.username ?? '—'}
+            <strong>Username:</strong> {accountUser?.username ?? storedUser?.username ?? '—'}
           </p>
           <p>
-            <strong>Email:</strong> {storedUser?.email ?? '—'}
+            <strong>Email:</strong> {accountUser?.email ?? storedUser?.email ?? '—'}
+          </p>
+          <p>
+            <strong>MFA:</strong> {accountUser?.isTwoFactorEnabled ? 'Enabled (Authenticator)' : 'Disabled'}
           </p>
           <p>
             <strong>Profile status:</strong> {profile ? 'Active' : 'Not created yet'}
@@ -237,6 +325,58 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
           </div>
         </section>
       </div>
+
+      <section className="profile-card card">
+        <h3>Authenticator MFA</h3>
+        <p className="brand-copy">Use Google Authenticator, Authy, Microsoft Authenticator, or any TOTP app.</p>
+
+        {!accountUser?.isTwoFactorEnabled ? (
+          <>
+            <form className="auth-form" onSubmit={handleGenerateMfaSetup}>
+              <button type="submit" className="submit" disabled={mfaSetupLoading}>
+                {mfaSetupLoading ? 'Generating…' : mfaQrCodeDataUrl ? 'Regenerate setup QR' : 'Generate setup QR'}
+              </button>
+            </form>
+
+            {mfaQrCodeDataUrl && (
+              <div className="auth-form">
+                <label>
+                  Scan this QR code in your authenticator app
+                  <img src={mfaQrCodeDataUrl} alt="Authenticator setup QR code" style={{ width: 220, maxWidth: '100%' }} />
+                </label>
+                <label>
+                  Manual setup key
+                  <input type="text" value={mfaSecret} readOnly />
+                </label>
+              </div>
+            )}
+
+            <form className="auth-form" onSubmit={handleEnableMfa}>
+              <label>
+                Authenticator code
+                <input
+                  type="text"
+                  name="mfaCode"
+                  value={mfaCode}
+                  onChange={(event) => setMfaCode(event.target.value.replace(/\D+/g, '').slice(0, 6))}
+                  placeholder="Enter 6-digit code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                />
+              </label>
+
+              <button type="submit" className="submit" disabled={mfaEnableLoading || !mfaQrCodeDataUrl}>
+                {mfaEnableLoading ? 'Enabling…' : 'Enable MFA'}
+              </button>
+            </form>
+          </>
+        ) : (
+          <button type="button" className="secondary" onClick={handleDisableMfa} disabled={mfaDisableLoading}>
+            {mfaDisableLoading ? 'Disabling…' : 'Disable MFA'}
+          </button>
+        )}
+      </section>
 
       <form className="profile-form card" onSubmit={handleSubmit}>
         <div className="form-grid">
