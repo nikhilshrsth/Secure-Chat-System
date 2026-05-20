@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import AdminDashboardPage from './pages/admin'
+import ChatPage from './pages/chat'
+import CustomerDashboardPage from './pages/dashboard'
 import LoginPage from './pages/login'
 import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
@@ -49,9 +51,20 @@ function App() {
           <header className="profile-shell-header">
             <div>
               <p className="brand-kicker">Shadow Link</p>
-              <h1>Your workspace profile</h1>
+              <h1>{isAdmin ? 'Admin workspace' : 'Customer workspace'}</h1>
             </div>
             <div className="shell-actions">
+              {!isAdmin && (
+                <NavLink to="/dashboard" className="secondary">
+                  Dashboard
+                </NavLink>
+              )}
+              <NavLink to="/chat" className="secondary">
+                Secure chat
+              </NavLink>
+              <NavLink to="/profile" className="secondary">
+                Profile
+              </NavLink>
               {isAdmin && (
                 <NavLink to="/admin" className="secondary">
                   Admin dashboard
@@ -64,11 +77,13 @@ function App() {
           </header>
         )}
         <Routes>
+          <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
           <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
-          <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/profile" replace />} />
-          <Route path="/login" element={<Navigate to="/profile" replace />} />
-          <Route path="/register" element={<Navigate to="/profile" replace />} />
-          <Route path="*" element={<Navigate to="/profile" replace />} />
+          <Route path="/chat" element={<ChatPage />} />
+          <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/dashboard" replace />} />
+          <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
+          <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
+          <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
         </Routes>
       </main>
     )

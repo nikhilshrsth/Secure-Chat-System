@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
+const { assertThreadAccess, sendMessage } = require('../services/chatService');
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -40,7 +41,7 @@ function registerSocketHandlers(io) {
         return next(new Error('Not authorized, user not found'));
       }
 
-      if (!user.isActive || !user.isPhoneVerified) {
+      if (!user.isActive || user.isLocked) {
         return next(new Error('Account activation required before chat access'));
       }
 
@@ -52,11 +53,53 @@ function registerSocketHandlers(io) {
   });
 
   io.on('connection', (socket) => {
-    socket.on('room:join', (roomId) => {
+    socket.on('room:join', async (roomId, ack) => {
       if (!roomId) {
+        if (typeof ack === 'function') {
+          ack({ ok: false, message: 'roomId is required' });
+        }
         return;
       }
-      socket.join(roomId);
+
+      try {
+        await assertThreadAccess(roomId, socket.user._id);
+        socket.join(roomId);
+        if (typeof ack === 'function') {
+          ack({ ok: true, roomId });
+        }
+      } catch (error) {
+        if (typeof ack === 'function') {
+          ack({ ok: false, message: error.message || 'Unable to join room' });
+        }
+      }
+    });
+
+    socket.on('chat:message:send', async (payload, ack) => {
+      try {
+        const result = await sendMessage({
+          threadId: payload?.threadId,
+          senderId: socket.user._id,
+          text: payload?.encryptedPayload,
+          replyToMessageId: payload?.replyToMessageId || null,
+          logContext: {
+            ipAddress: socket.handshake.address || null,
+            userAgent: socket.handshake.headers?.['user-agent'] || null,
+          },
+        });
+
+        io.to(result.threadId).emit('chat:message:new', {
+          threadId: result.threadId,
+          message: result.payload,
+        });
+
+        if (typeof ack === 'function') {
+          ack({ ok: true, message: result.payload });
+        }
+      } catch (error) {
+        if (typeof ack === 'function') {
+          ack({ ok: false, message: error.message || 'Unable to send message' });
+        }
+      }
     });
   });
 }

@@ -2,6 +2,12 @@ const mongoose = require('mongoose');
 
 const messageSchema = new mongoose.Schema(
   {
+    threadId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ChatThread',
+      required: true,
+      index: true,
+    },
     sender: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -24,6 +30,20 @@ const messageSchema = new mongoose.Schema(
     iv: {
       type: String,
       required: true,
+    },
+    authTag: {
+      type: String,
+      required: true,
+    },
+    algorithm: {
+      type: String,
+      default: 'aes-256-gcm',
+    },
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Message',
+      default: null,
+      index: true,
     },
     expiresAt: {
       type: Date,

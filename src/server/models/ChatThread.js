@@ -38,6 +38,19 @@ const chatThreadSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    encryptedKeys: [
+      {
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          required: true,
+        },
+        encryptedKey: {
+          type: String,
+          required: true,
+        },
+      },
+    ],
   },
   { timestamps: true },
 );

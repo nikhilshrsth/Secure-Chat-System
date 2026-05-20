@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { type AxiosError } from 'axios';
 import { createApiClient } from '../lib/api';
@@ -76,6 +76,7 @@ function AdminDashboardPage() {
   const [systemLogSearch, setSystemLogSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
+  const hasLoadedDashboard = useRef(false);
   const [data, setData] = useState<Record<string, any>>({
     overview: { summary: {}, charts: {} },
     users: [],
@@ -93,47 +94,80 @@ function AdminDashboardPage() {
     setLoading(true);
     setStatus({ type: '', message: '' });
     try {
-      const [
-        overview,
-        users,
-        loginAttempts,
-        alerts,
-        threads,
-        integrity,
-        ephemeral,
-        systemLogs,
-        audit,
-        devsecops,
-      ] = await Promise.all([
-        api.get('/api/admin/dashboard'),
-        api.get('/api/admin/users'),
-        api.get('/api/admin/login-attempts'),
-        api.get('/api/admin/alerts'),
-        api.get('/api/admin/threads'),
-        api.get('/api/admin/message-integrity'),
-        api.get('/api/admin/ephemeral-messages'),
-        api.get('/api/admin/system-logs'),
-        api.get('/api/admin/audit-trail'),
-        api.get('/api/admin/devsecops'),
-      ]);
+      const overview = await api.get('/api/admin/dashboard');
 
-      setData({
+      setData((prev) => ({
+        ...prev,
         overview: overview.data,
-        users: users.data.users || [],
-        loginAttempts: loginAttempts.data.attempts || [],
-        alerts: alerts.data.alerts || [],
-        threads: threads.data.threads || [],
-        integrity: integrity.data.logs || [],
-        ephemeral: ephemeral.data.logs || [],
-        systemLogs: systemLogs.data.logs || [],
-        audit: audit.data.logs || [],
-        devsecops: devsecops.data.scan,
-      });
+      }));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load admin dashboard.' });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadSectionData(section: string) {
+    try {
+      if (section === 'overview') {
+        const response = await api.get('/api/admin/dashboard');
+        setData((prev) => ({ ...prev, overview: response.data }));
+        return;
+      }
+
+      if (section === 'users') {
+        await refreshUsers('');
+        return;
+      }
+
+      if (section === 'loginAttempts') {
+        const response = await api.get('/api/admin/login-attempts');
+        setData((prev) => ({ ...prev, loginAttempts: response.data.attempts || [] }));
+        return;
+      }
+
+      if (section === 'alerts') {
+        await refreshAlerts();
+        return;
+      }
+
+      if (section === 'threads') {
+        const response = await api.get('/api/admin/threads');
+        setData((prev) => ({ ...prev, threads: response.data.threads || [] }));
+        return;
+      }
+
+      if (section === 'integrity') {
+        const response = await api.get('/api/admin/message-integrity');
+        setData((prev) => ({ ...prev, integrity: response.data.logs || [] }));
+        return;
+      }
+
+      if (section === 'ephemeral') {
+        const response = await api.get('/api/admin/ephemeral-messages');
+        setData((prev) => ({ ...prev, ephemeral: response.data.logs || [] }));
+        return;
+      }
+
+      if (section === 'systemLogs') {
+        await refreshSystemLogs('');
+        return;
+      }
+
+      if (section === 'audit') {
+        const response = await api.get('/api/admin/audit-trail');
+        setData((prev) => ({ ...prev, audit: response.data.logs || [] }));
+        return;
+      }
+
+      if (section === 'devsecops') {
+        const response = await api.get('/api/admin/devsecops');
+        setData((prev) => ({ ...prev, devsecops: response.data.scan || null }));
+      }
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || `Unable to load ${section} data.` });
     }
   }
 
@@ -158,8 +192,32 @@ function AdminDashboardPage() {
       return;
     }
 
+    if (hasLoadedDashboard.current) {
+      return;
+    }
+
+    hasLoadedDashboard.current = true;
+
     loadDashboard();
   }, []);
+
+  useEffect(() => {
+    if (storedUser?.role !== 'admin') return;
+
+    if (activeSection === 'overview') return;
+
+    if (activeSection === 'users' && data.users.length > 0) return;
+    if (activeSection === 'loginAttempts' && data.loginAttempts.length > 0) return;
+    if (activeSection === 'alerts' && data.alerts.length > 0) return;
+    if (activeSection === 'threads' && data.threads.length > 0) return;
+    if (activeSection === 'integrity' && data.integrity.length > 0) return;
+    if (activeSection === 'ephemeral' && data.ephemeral.length > 0) return;
+    if (activeSection === 'systemLogs' && data.systemLogs.length > 0) return;
+    if (activeSection === 'audit' && data.audit.length > 0) return;
+    if (activeSection === 'devsecops' && data.devsecops) return;
+
+    loadSectionData(activeSection);
+  }, [activeSection]);
 
   async function runUserAction(userId: string, action: string) {
     if (action === 'disable' && !window.confirm('Suspend this customer account?')) return;
