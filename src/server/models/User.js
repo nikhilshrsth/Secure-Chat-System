@@ -43,12 +43,34 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user',
+      enum: ['customer', 'admin'],
+      default: 'customer',
     },
     isActive: {
       type: Boolean,
       default: true,
+    },
+    isLocked: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    lockedAt: {
+      type: Date,
+      default: null,
+    },
+    lockReason: {
+      type: String,
+      default: null,
+      maxlength: 300,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+    failedLoginCount: {
+      type: Number,
+      default: 0,
     },
     twoFactorSecret: {
       type: String,
@@ -68,6 +90,12 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+userSchema.pre('validate', function normalizeLegacyRole() {
+  if (this.role === 'user') {
+    this.role = 'customer';
+  }
+});
 
 userSchema.pre('save', async function hashPasswordHash() {
   if (!this.isModified('passwordHash')) {

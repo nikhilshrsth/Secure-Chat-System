@@ -24,9 +24,9 @@ async function protect(req, res, next) {
     const decoded = jwt.verify(token, getJwtSecret());
     const user = await User.findById(decoded.userId).select('-passwordHash');
 
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.isLocked) {
       res.status(401);
-      return next(new Error('Not authorized, user not found or inactive'));
+      return next(new Error('Not authorized, user not found, inactive, or locked'));
     }
 
     req.user = user;
@@ -51,9 +51,9 @@ async function protectAllowInactive(req, res, next) {
     const decoded = jwt.verify(token, getJwtSecret());
     const user = await User.findById(decoded.userId).select('-passwordHash');
 
-    if (!user) {
+    if (!user || user.isLocked) {
       res.status(401);
-      return next(new Error('Not authorized, user not found'));
+      return next(new Error('Not authorized, user not found or locked'));
     }
 
     req.user = user;

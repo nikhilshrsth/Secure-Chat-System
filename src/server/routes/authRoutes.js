@@ -24,7 +24,7 @@ function generateToken(user) {
   return jwt.sign(
     {
       userId: user._id,
-      role: user.role,
+      role: user.role === 'admin' ? 'admin' : 'customer',
     },
     getJwtSecret(),
     {
@@ -51,8 +51,9 @@ function mapUserResponse(user) {
     id: user._id,
     username: user.username,
     email: user.email,
-    role: user.role,
+    role: user.role === 'admin' ? 'admin' : 'customer',
     isActive: user.isActive,
+    isLocked: Boolean(user.isLocked),
     isTwoFactorEnabled: user.isTwoFactorEnabled,
   };
 }
@@ -133,7 +134,7 @@ router.post('/register', async (req, res, next) => {
       isPhoneVerified: false,
       isActive: false,
       isTwoFactorEnabled: false,
-      role: 'user',
+      role: 'customer',
     });
 
     // Generate and send OTP (email failure is non-fatal — OTP is still stored)
@@ -246,6 +247,9 @@ router.post('/login', async (req, res, next) => {
         attemptCount >= 5 ? 'WARN' : 'INFO',
       );
 
+      user.failedLoginCount = attemptCount;
+      await user.save();
+
       // Log anomaly if too many attempts
       if (attemptCount >= 5) {
         await Logger.log({
@@ -260,6 +264,19 @@ router.post('/login', async (req, res, next) => {
       }
 
       return next(new Error('Invalid credentials'));
+    }
+
+    if (user.isLocked) {
+      res.status(423);
+      await Logger.logAuthAttempt(
+        user._id,
+        logContext.ipAddress,
+        logContext.userAgent,
+        false,
+        'Login attempt on locked account',
+        'WARN',
+      );
+      return next(new Error('User account is locked'));
     }
 
     if (!user.isActive) {
@@ -281,6 +298,10 @@ router.post('/login', async (req, res, next) => {
     }
 
     const token = generateToken(user);
+    user.lastLoginAt = new Date();
+    user.failedLoginCount = 0;
+    await user.save();
+
     await Logger.logAuthAttempt(
       user._id,
       logContext.ipAddress,
@@ -322,7 +343,7 @@ router.post('/google', async (req, res, next) => {
         username: googleUser.username,
         email: normalizedEmail,
         passwordHash: crypto.randomBytes(24).toString('hex'),
-        role: 'user',
+        role: 'customer',
         authProvider: 'google',
         googleId: googleUser.googleId,
         isPhoneVerified: false,
@@ -342,12 +363,21 @@ router.post('/google', async (req, res, next) => {
       return next(new Error('User account is disabled'));
     }
 
+    if (user.isLocked) {
+      res.status(423);
+      return next(new Error('User account is locked'));
+    }
+
     if (user.isTwoFactorEnabled && user.twoFactorSecret) {
       await issueMfaChallengeResponse(res, user, logContext, 'Google sign-in');
       return;
     }
 
     const token = generateToken(user);
+    user.lastLoginAt = new Date();
+    user.failedLoginCount = 0;
+    await user.save();
+
     res.status(200).json({
       token,
       user: mapUserResponse(user),
@@ -442,6 +472,9 @@ router.post('/mfa/verify-login', async (req, res, next) => {
     }
 
     const token = generateToken(user);
+    user.lastLoginAt = new Date();
+    user.failedLoginCount = 0;
+    await user.save();
 
     await Logger.logAuthAttempt(
       user._id,

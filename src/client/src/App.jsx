@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import AdminDashboardPage from './pages/admin'
 import LoginPage from './pages/login'
 import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
@@ -11,6 +12,9 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('secureChatTheme') || 'light')
   const [token, setToken] = useState(() => localStorage.getItem('secureChatToken'))
   const isLogin = location.pathname === '/login' || location.pathname === '/'
+  const storedUser = localStorage.getItem('secureChatUser')
+  const currentUser = storedUser ? JSON.parse(storedUser) : null
+  const isAdmin = currentUser?.role === 'admin'
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -40,18 +44,28 @@ function App() {
 
   if (token) {
     return (
-      <main className="profile-shell">
-        <header className="profile-shell-header">
-          <div>
-            <p className="brand-kicker">Shadow Link</p>
-            <h1>Your workspace profile</h1>
-          </div>
-          <button type="button" className="secondary" onClick={handleSignOut}>
-            Sign out
-          </button>
-        </header>
+      <main className={location.pathname.startsWith('/admin') ? 'admin-route-shell' : 'profile-shell'}>
+        {!location.pathname.startsWith('/admin') && (
+          <header className="profile-shell-header">
+            <div>
+              <p className="brand-kicker">Shadow Link</p>
+              <h1>Your workspace profile</h1>
+            </div>
+            <div className="shell-actions">
+              {isAdmin && (
+                <NavLink to="/admin" className="secondary">
+                  Admin dashboard
+                </NavLink>
+              )}
+              <button type="button" className="secondary" onClick={handleSignOut}>
+                Sign out
+              </button>
+            </div>
+          </header>
+        )}
         <Routes>
           <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
+          <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/profile" replace />} />
           <Route path="/login" element={<Navigate to="/profile" replace />} />
           <Route path="/register" element={<Navigate to="/profile" replace />} />
           <Route path="*" element={<Navigate to="/profile" replace />} />
