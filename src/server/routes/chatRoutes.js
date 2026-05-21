@@ -58,6 +58,9 @@ router.get('/users/search', async (req, res, next) => {
     const user = await searchCustomerByEmail(req.query.email, req.user._id);
     res.json({ user });
   } catch (error) {
+    if (error?.statusCode === 404) {
+      return res.status(200).json({ user: null, message: error.message });
+    }
     withStatus(res, error);
     next(error);
   }

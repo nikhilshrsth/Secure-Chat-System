@@ -16,6 +16,11 @@ export default defineConfig(({ mode }) => {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
         },
+        '/socket.io': {
+          target: `http://localhost:${serverPort}`,
+          changeOrigin: true,
+          ws: true,
+        },
       },
     },
   }

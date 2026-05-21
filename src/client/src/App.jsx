@@ -6,6 +6,8 @@ import CustomerDashboardPage from './pages/dashboard'
 import LoginPage from './pages/login'
 import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
+import { createApiClient } from './lib/api'
+import { getOrCreateIdentity } from './lib/chatE2ee'
 import './App.css'
 
 function App() {
@@ -36,6 +38,26 @@ function App() {
       window.removeEventListener('storage', handleAuthChanged)
     }
   }, [])
+
+  // After login, eagerly generate the user's E2EE identity and publish their
+  // public key so other customers can immediately send first-contact requests.
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const identity = await getOrCreateIdentity()
+        if (cancelled) return
+        const api = createApiClient()
+        await api.put('/api/chat/keys/public', { publicKey: identity.publicKey })
+      } catch {
+        // Non-fatal: chat page will retry on its own bootstrap.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   function handleSignOut() {
     localStorage.removeItem('secureChatToken')

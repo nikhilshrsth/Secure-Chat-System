@@ -110,7 +110,7 @@ function formatTime(value: string) {
 
 function ChatPage() {
   const api = useMemo(() => createApiClient(), []);
-  const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
+  const socketUrl = import.meta.env.VITE_SOCKET_URL || '';
   const token = localStorage.getItem('secureChatToken') || '';
   const currentUser = useMemo(() => {
     const raw = localStorage.getItem('secureChatUser');
@@ -221,10 +221,19 @@ function ChatPage() {
   }
 
   useEffect(() => {
-    const socket = io(socketUrl, {
+    const socketOptions = {
       auth: { token },
-      transports: ['websocket'],
-    });
+      path: '/socket.io',
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
+    };
+
+    const socket = socketUrl
+      ? io(socketUrl, socketOptions)
+      : io(socketOptions);
 
     socketRef.current = socket;
 
@@ -331,7 +340,19 @@ function ChatPage() {
   async function searchByEmail() {
     try {
       const response = await api.get('/api/chat/users/search', { params: { email: requestEmail } });
-      setSearchedUser(response.data.user || null);
+      const user = response.data.user || null;
+      setSearchedUser(user);
+      if (!user) {
+        setStatus({ type: 'error', message: response.data.message || 'No active customer found for that email.' });
+        return;
+      }
+      if (!user.publicKey) {
+        setStatus({
+          type: 'warn',
+          message: 'User found, but they have not activated secure chat yet. They must sign in once before you can message them.',
+        });
+        return;
+      }
       setStatus({ type: 'success', message: 'User found. You can send your first message request.' });
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
@@ -467,13 +488,25 @@ function ChatPage() {
           {searchedUser && (
             <div className="request-preview">
               <p>{searchedUser.username} ({searchedUser.email})</p>
+              {!searchedUser.publicKey && (
+                <p className="status warn">
+                  This user hasn't activated secure chat yet. Ask them to sign in once so their
+                  device can publish a public key — then you can send your first encrypted request.
+                </p>
+              )}
               <textarea
                 value={firstMessageInput}
                 onChange={(event) => setFirstMessageInput(event.target.value)}
                 placeholder="Write your first encrypted message"
                 rows={3}
+                disabled={!searchedUser.publicKey}
               />
-              <button type="button" className="submit" onClick={sendFirstRequest} disabled={requesting || !firstMessageInput.trim()}>
+              <button
+                type="button"
+                className="submit"
+                onClick={sendFirstRequest}
+                disabled={requesting || !firstMessageInput.trim() || !searchedUser.publicKey}
+              >
                 {requesting ? 'Sending...' : 'Send request'}
               </button>
             </div>

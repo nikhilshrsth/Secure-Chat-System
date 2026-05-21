@@ -7,7 +7,7 @@ const app = require('./app');
 const connectDB = require('./config/db');
 const registerSocketHandlers = require('./sockets');
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 const server = http.createServer(app);
@@ -26,9 +26,33 @@ registerSocketHandlers(io);
 async function startServer() {
   await connectDB();
 
-  server.listen(PORT, () => {
-    console.log(`Secure Chat API running on port ${PORT}`);
-  });
+  const MAX_PORT_ATTEMPTS = 15;
+
+  function bind(port, attempt = 0) {
+    const onError = (error) => {
+      if (error && error.code === 'EADDRINUSE' && attempt < MAX_PORT_ATTEMPTS - 1) {
+        const nextPort = port + 1;
+        console.warn(`Port ${port} is already in use. Retrying on ${nextPort}...`);
+        bind(nextPort, attempt + 1);
+        return;
+      }
+
+      console.error(`Unable to start API after trying ${attempt + 1} port(s).`);
+      throw error;
+    };
+
+    server.once('error', onError);
+
+    server.listen(port, () => {
+      server.removeListener('error', onError);
+      console.log(`Secure Chat API running on port ${port}`);
+      if (port !== PORT) {
+        console.log(`Configured port ${PORT} was busy; using fallback port ${port}.`);
+      }
+    });
+  }
+
+  bind(PORT);
 }
 
 startServer().catch((error) => {
