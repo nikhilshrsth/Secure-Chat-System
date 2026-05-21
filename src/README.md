@@ -1,253 +1,218 @@
-# Secure Chat Application
+# Shadow Link Secure Chat System
 
-> A secure real-time chat application built with the MERN stack for ICT932 Cybersecurity Testing and Assurance.
+> A secure real-time chat application built for ICT932 Cybersecurity Testing and Assurance.
 
 **Unit:** ICT932 - Cybersecurity Testing and Assurance  
 **Course:** Master of Information Technology (MIT)  
 **Semester:** S1-2026  
 **Assessment:** Assessment 3 - Cybersecurity Project Implementation  
-**Project Option:** Project 6 - Secure Chat Application
+**Project option:** Project 6 - Secure Chat Application
 
 ---
 
 ## Project Overview
 
-This project is a secure chat system that allows registered users to send real-time encrypted messages. The system focuses on practical security controls that are achievable within the assessment timeframe while still demonstrating strong cybersecurity design.
+Shadow Link is a MERN-style secure messaging prototype that demonstrates authentication, account verification, role-based access control, client-side encrypted chat, user profile management, and security monitoring.
 
-The application uses:
+The current implementation includes a React/Vite frontend, an Express/MongoDB backend, Socket.IO real-time messaging, JWT-protected API routes, email OTP registration verification, optional authenticator-app MFA, customer and admin workspaces, and metadata-focused security logging.
 
-- React for the frontend
-- Node.js and Express for the backend API
-- MongoDB for data storage
-- Socket.IO for real-time messaging
-- JWT-based authentication
-- Password hashing with bcrypt
-- Two-factor authentication using TOTP
-- Client-side message encryption using browser cryptography APIs
-
-The goal is to build a system that is secure, understandable, testable, and suitable for a live demonstration.
+This project is designed for academic demonstration and security testing. It should not be used for real private communication without further production hardening and independent security review.
 
 ---
 
-## Main Objectives
+## Key Features
 
-- Build a working real-time chat application.
-- Secure user registration and login.
-- Store passwords safely using bcrypt.
-- Protect API routes using JWT authentication.
-- Add two-factor authentication for login.
-- Encrypt chat messages before storing or transmitting them.
-- Add basic role-based access control for normal users and admins.
-- Log important security events such as login attempts and failed authentication.
-- Test the application using unit, integration, and security tests.
-- Use a simple DevSecOps pipeline with build, security scan, test, DAST, and deploy stages.
+### Customer Features
 
----
-
-## Team Members
-
-| Name | Student ID | Role | Contribution |
-|------|------------|------|--------------|
-| [Member 1] | [ID] | Backend and Authentication | TBD |
-| [Member 2] | [ID] | Frontend and Chat UI | TBD |
-| [Member 3] | [ID] | Security Testing and CI/CD | TBD |
-| [Member 4] | [ID] | Documentation and Threat Model | TBD |
-
----
-
-## Core Features
-
-### User Features
-
-- User registration and login
-- Two-factor authentication using an authenticator app
-- Password hashing with bcrypt
-- JWT authentication
-- Real-time one-to-one chat
-- Basic group chat
-- Encrypted message content
-- Simple ephemeral messages
-- Chat history
-- Logout
+- Customer registration with email OTP verification.
+- Email/password login with bcrypt password hashing.
+- Optional TOTP MFA using an authenticator app.
+- JWT-authenticated customer workspace.
+- Profile management for date of birth, alternative email, country, language, theme preference, and profile picture.
+- Light and dark theme preference.
+- Customer dashboard showing active threads and request counts.
+- End-to-end encrypted direct chat workflow.
+- First-contact chat request flow by recipient email.
+- Incoming request accept/reject handling.
+- Outgoing request status tracking.
+- Real-time message delivery with Socket.IO.
+- REST fallback for message sending when the socket is unavailable.
+- One-level message replies.
 
 ### Admin Features
 
-- Admin-only dashboard
-- View registered users
-- View login and security event logs
-- Disable or enable user accounts
+- Admin-only dashboard.
+- Customer account list with search.
+- Customer activation and suspension.
+- Login attempt monitoring.
+- Security log viewing and export.
+- Critical/anomaly log views.
+- Suspicious alert review, status updates, notes, and user suspension from alerts.
+- Chat thread metadata review.
+- Message integrity metadata review.
+- Ephemeral message metadata review.
+- Admin audit trail.
+- DevSecOps scan status view backed by stored scan metadata.
 
 ### Security Features
 
-- Password hashing with bcrypt
-- JWT access control
-- Two-factor authentication using TOTP
-- Role-based access control
-- Input validation
-- Rate limiting on authentication routes
-- Secure HTTP headers using Helmet
-- CORS restrictions
-- ECDH key exchange for chat encryption
-- AES-GCM message encryption before database storage
-- Encrypted message content stored at rest in MongoDB
-- Message integrity verification using AES-GCM authentication tags
-- Audit logging for important events
-- Environment-based secrets
-
----
-
-## Optional Features
-
-These features are useful but should only be added after the core system is complete:
-
-- Refresh tokens
-- Docker Compose setup
-- Advanced group key management
-- Certificate-based authentication
-
----
-
-## Simplified Architecture
-
-```text
-React Client
-     |
-     | HTTPS / Socket.IO
-     |
-Express API + Socket.IO Server
-     |
-     | Mongoose
-     |
-MongoDB
-```
-
-### Message Flow
-
-1. A user logs in and receives a JWT.
-2. The user completes TOTP-based two-factor authentication.
-3. The client connects to the server using Socket.IO.
-4. Chat participants derive a shared key using ECDH.
-5. Before sending a message, the client encrypts the message content using AES-GCM.
-6. The server receives and stores the encrypted message.
-7. The recipient receives the encrypted message and decrypts it on their client.
-
-The implementation should stay simple: ECDH and AES-GCM are required for the chat security design, but advanced key rotation and complex group key management can be treated as future improvements.
+- Password hashing with bcrypt.
+- JWT access control for API routes and Socket.IO connections.
+- Role-based authorization for admin routes.
+- Email OTP verification during registration.
+- Optional TOTP MFA for login.
+- Google ID token verification endpoint for Google sign-in.
+- Helmet security headers.
+- CORS restricted to the configured frontend origin.
+- API rate limiting.
+- Zod validation for profile payloads.
+- Multer file size and extension checks for profile pictures.
+- Client-side RSA-OAEP identity keys.
+- Per-thread AES-GCM message keys wrapped for each participant.
+- AES-GCM encrypted message payloads stored in MongoDB.
+- AES-GCM authentication tag storage for integrity verification.
+- Server-side checks that encrypted payloads include ciphertext, IV, auth tag, and supported algorithm metadata.
+- Security, admin, encryption, message integrity, and suspicious activity logs.
 
 ---
 
 ## Technology Stack
 
 | Area | Technology |
-|------|------------|
-| Frontend | React, Vite, TailwindCSS |
-| Backend | Node.js, Express |
+| --- | --- |
+| Frontend | React 19, Vite 8, React Router 7 |
+| Frontend API | Axios, Socket.IO Client |
+| Frontend crypto | Web Crypto API, RSA-OAEP, AES-GCM |
+| Backend | Node.js, Express 5 |
 | Database | MongoDB, Mongoose |
-| Real-time Messaging | Socket.IO |
+| Real-time messaging | Socket.IO |
 | Authentication | JWT, bcrypt |
-| 2FA | TOTP using speakeasy |
-| Security Middleware | Helmet, CORS, express-rate-limit |
-| Validation | Joi or Zod |
-| Logging | Winston or Morgan |
-| Testing | Jest, Supertest, React Testing Library |
-| CI/CD | GitHub Actions |
-| Security Checks | Semgrep or ESLint security rules, npm audit, OWASP ZAP, Gitleaks |
+| MFA | speakeasy TOTP, QRCode |
+| Email OTP | Nodemailer |
+| Google sign-in | google-auth-library |
+| Validation | Zod |
+| Security middleware | Helmet, CORS, express-rate-limit |
+| File uploads | Multer |
+| Backend testing | Jest |
 
 ---
 
 ## Repository Structure
 
 ```text
-secure-chat-system/
+Secure-Chat-System/
+├── docs/
+│   ├── LOGGING-SETUP.md
+│   ├── implementation-phases.md
+│   └── logging-system.md
 ├── src/
+│   ├── README.md
 │   ├── client/
+│   │   ├── public/
+│   │   │   ├── favicon.svg
+│   │   │   ├── icons.svg
+│   │   │   └── shadow-link-logo.png
 │   │   ├── src/
-│   │   │   ├── components/
+│   │   │   ├── lib/
+│   │   │   │   ├── api.ts
+│   │   │   │   └── chatE2ee.ts
 │   │   │   ├── pages/
-│   │   │   ├── context/
-│   │   │   ├── services/
-│   │   │   ├── crypto/
-│   │   │   └── App.jsx
+│   │   │   │   ├── admin.tsx
+│   │   │   │   ├── chat.tsx
+│   │   │   │   ├── dashboard.tsx
+│   │   │   │   ├── login.tsx
+│   │   │   │   ├── profile.tsx
+│   │   │   │   └── register.tsx
+│   │   │   ├── App.jsx
+│   │   │   ├── App.css
+│   │   │   ├── index.css
+│   │   │   └── main.jsx
 │   │   ├── package.json
 │   │   └── vite.config.js
 │   └── server/
 │       ├── config/
-│       ├── controllers/
+│       │   └── db.js
+│       ├── lib/
+│       │   ├── chatCrypto.js
+│       │   └── profileValidation.js
 │       ├── middleware/
 │       ├── models/
 │       ├── routes/
+│       ├── scripts/
+│       │   └── create-profile-indexes.js
+│       ├── services/
 │       ├── sockets/
-│       ├── utils/
+│       ├── tests/
+│       │   └── profileValidation.test.js
 │       ├── app.js
-│       ├── server.js
-│       └── package.json
-├── docs/
-│   ├── architecture.md
-│   ├── threat-model.md
-│   ├── api-docs.md
-│   └── testing-report.md
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── security/
-├── ci-cd/
-│   ├── zap/
-│   └── deployment/
-├── .github/
-│   └── workflows/
-├── .env.example
-├── .gitignore
-└── README.md
+│       ├── jest.config.js
+│       ├── package.json
+│       └── server.js
+└── ICT 932 Assessment 3.docx
 ```
 
 ---
 
 ## Prerequisites
 
-- Node.js 20 or higher
-- npm 10 or higher
-- MongoDB 7 or MongoDB Atlas
-- Git
-- Modern browser such as Chrome, Firefox, Edge, or Safari
+- Node.js 20 or later.
+- npm 10 or later.
+- MongoDB running locally or a MongoDB Atlas connection string.
+- SMTP credentials for registration OTP email delivery.
+- A modern browser with Web Crypto API support.
+- Optional: a Google Cloud OAuth client ID for Google sign-in.
 
 ---
 
 ## Installation
 
-### 1. Clone the Repository
+Clone the repository and install backend and frontend dependencies separately.
 
 ```bash
-git clone https://github.com/<your-team>/secure-chat-system.git
-cd secure-chat-system
+git clone <repository-url>
+cd Secure-Chat-System
 ```
 
-### 2. Install Backend Dependencies
+Install the backend:
 
 ```bash
 cd src/server
 npm install
 ```
 
-### 3. Install Frontend Dependencies
+Install the frontend:
 
 ```bash
 cd ../client
 npm install
 ```
 
-### 4. Configure Environment Variables
+The root `src/package.json` currently only declares `nodemailer` and does not provide app-level run scripts. Use `src/server` and `src/client` for development commands.
 
-Create a `.env` file in `src/server`:
+---
+
+## Configuration
+
+Create a `.env` file in `src/server`.
 
 ```env
 NODE_ENV=development
 PORT=5000
 CLIENT_URL=http://localhost:5173
 MONGO_URI=mongodb://localhost:27017/securechat
-JWT_SECRET=replace-with-a-strong-secret
-TOTP_ISSUER=SecureChat
+JWT_SECRET=replace-with-a-long-random-secret
+TOTP_ISSUER=Shadow Link
 BCRYPT_ROUNDS=12
 RATE_LIMIT_WINDOW_MS=60000
-RATE_LIMIT_MAX=5
+RATE_LIMIT_MAX=100
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your-smtp-username
+SMTP_PASS=your-smtp-password
+SMTP_FROM=no-reply@example.com
+
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
 ```
 
 Generate a strong JWT secret with:
@@ -256,11 +221,21 @@ Generate a strong JWT secret with:
 node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 ```
 
+Optional frontend environment file in `src/client/.env`:
+
+```env
+VITE_SOCKET_URL=http://localhost:5000
+```
+
+This is recommended because the chat page defaults `VITE_SOCKET_URL` to `http://localhost:3000`, while the backend defaults to port `5000`. The Vite API proxy reads `PORT` from `src/server/.env`, so keeping `PORT=5000` in the server `.env` also keeps `/api` requests aligned.
+
 ---
 
-## Running the Application
+## Running the Project
 
-### Start the Backend
+Start MongoDB first, then run the backend and frontend in separate terminals.
+
+Backend:
 
 ```bash
 cd src/server
@@ -273,209 +248,279 @@ Backend API:
 http://localhost:5000
 ```
 
-### Start the Frontend
+Frontend:
 
 ```bash
 cd src/client
 npm run dev
 ```
 
-Frontend:
+Frontend app:
 
 ```text
 http://localhost:5173
 ```
 
----
+Useful health endpoints:
 
-## Security Design
+```text
+GET /api/health
+GET /api/health/env
+```
 
-The project focuses on a practical security baseline:
-
-| Security Area | Implementation |
-|---------------|----------------|
-| Password security | bcrypt hashing |
-| Authentication | JWT tokens |
-| Two-factor authentication | TOTP authenticator code during login |
-| Authorization | User and admin roles |
-| Input validation | Joi or Zod schemas |
-| Rate limiting | Limit repeated login attempts |
-| Secure headers | Helmet middleware |
-| CORS | Allow only trusted frontend origin |
-| Message privacy | ECDH key exchange and AES-GCM message encryption |
-| Database storage | Store encrypted message content instead of plaintext |
-| Message integrity | AES-GCM authentication tags |
-| Auditability | Log security-relevant events |
-| Secret management | Use `.env`, never hard-code secrets |
-
-### OWASP Top 10 Coverage
-
-The project will address at least three OWASP Top 10 categories:
-
-- Broken Access Control: role checks for protected and admin routes
-- Cryptographic Failures: hashed passwords, ECDH key exchange, and AES-GCM encrypted messages
-- Injection: input validation and safe Mongoose queries
-- Identification and Authentication Failures: secure login, 2FA, rate limiting, and JWT checks
+The `/api/health/env` endpoint reports whether key environment variables are set. It is useful during local development, but should be removed or protected before production deployment.
 
 ---
 
-## Testing
+## Usage Guide
 
-### Backend Tests
+### Register and Verify a Customer
+
+1. Open `http://localhost:5173/register`.
+2. Enter full name, email, and password.
+3. Check the email inbox for the OTP.
+4. Enter the OTP to activate the account.
+5. Sign in from the login page.
+
+SMTP configuration is required for a usable registration flow because the OTP is delivered by email.
+
+### Set Up MFA
+
+1. Sign in.
+2. Open the Profile page.
+3. Generate an authenticator setup QR code.
+4. Scan the QR code with Google Authenticator, Authy, Microsoft Authenticator, or another TOTP app.
+5. Enter the 6-digit code to enable MFA.
+
+After MFA is enabled, login returns an MFA challenge and requires `/api/auth/mfa/verify-login` before issuing the normal session JWT.
+
+### Start an Encrypted Chat
+
+1. Both users must sign in and open the chat page at least once so their browser encryption public keys are uploaded.
+2. Search for another customer by email.
+3. Send a first encrypted message request.
+4. The recipient accepts or rejects the request.
+5. Once accepted, a direct chat thread is created and messages are delivered in real time.
+
+Rejected first-contact requests are locked so the same requester cannot message that recipient again through the request flow.
+
+### Admin Access
+
+Admin routes require a user with `role: "admin"` in MongoDB. There is currently no admin bootstrap script or admin registration flow, so an admin account must be created or promoted manually in the database for local testing.
+
+Admin workspace:
+
+```text
+http://localhost:5173/admin
+```
+
+---
+
+## API Overview
+
+All protected routes require:
+
+```http
+Authorization: Bearer <jwt>
+```
+
+### Authentication
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| POST | `/api/auth/register` | Create inactive customer account and send email OTP. |
+| POST | `/api/auth/verify-email` | Verify registration OTP and activate account. |
+| POST | `/api/auth/login` | Login with email/password; may return MFA challenge. |
+| POST | `/api/auth/google` | Login or register with a verified Google ID token. |
+| POST | `/api/auth/mfa/verify-login` | Complete MFA login challenge. |
+| POST | `/api/auth/mfa/setup` | Generate TOTP setup secret and QR code. |
+| POST | `/api/auth/mfa/enable` | Enable TOTP after code verification. |
+| POST | `/api/auth/mfa/disable` | Disable TOTP for current user. |
+| GET | `/api/auth/me` | Return current authenticated user. |
+
+### Profile
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| GET | `/api/profile` | Get current user, profile, and supported country/language lists. |
+| POST | `/api/profile` | Create profile. |
+| PUT | `/api/profile` | Update profile. |
+| POST | `/api/profile/picture` | Upload JPG, PNG, or WEBP profile picture up to 2 MB. |
+| DELETE | `/api/profile/picture` | Remove profile picture. |
+
+### Chat
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| GET | `/api/chat/users` | List active customer users except current user. |
+| GET | `/api/chat/users/search?email=` | Search active customer by email. |
+| PUT | `/api/chat/keys/public` | Upload current browser public encryption key. |
+| GET | `/api/chat/requests/incoming` | List pending incoming chat requests. |
+| GET | `/api/chat/requests/outgoing` | List outgoing chat requests. |
+| POST | `/api/chat/requests` | Create encrypted first-contact request. |
+| POST | `/api/chat/requests/:requestId/accept` | Accept request and create thread. |
+| POST | `/api/chat/requests/:requestId/reject` | Reject request and lock future requests from that sender. |
+| GET | `/api/chat/threads` | List current user's threads. |
+| POST | `/api/chat/threads/direct` | Create or update a direct thread with participant keys. |
+| GET | `/api/chat/threads/:threadId/key` | Get encrypted thread key for current user. |
+| GET | `/api/chat/threads/:threadId/messages` | List encrypted thread messages. |
+| POST | `/api/chat/threads/:threadId/messages` | Send encrypted message through REST fallback. |
+| POST | `/api/chat/threads/:threadId/join` | Validate access to a chat room. |
+
+### Admin
+
+Admin routes include:
+
+```text
+GET    /api/admin/dashboard
+GET    /api/admin/users
+POST   /api/admin/users/:userId/disable
+POST   /api/admin/users/:userId/enable
+GET    /api/admin/login-attempts
+GET    /api/admin/alerts
+PATCH  /api/admin/alerts/:alertId/status
+PATCH  /api/admin/alerts/:alertId/note
+POST   /api/admin/alerts/:alertId/disable-user
+GET    /api/admin/threads
+GET    /api/admin/message-integrity
+GET    /api/admin/ephemeral-messages
+GET    /api/admin/system-logs
+GET    /api/admin/audit-trail
+GET    /api/admin/devsecops
+GET    /api/admin/logs
+GET    /api/admin/logs/export
+GET    /api/admin/logs/stats
+GET    /api/admin/logs/critical
+GET    /api/admin/logs/anomalies
+```
+
+### Socket.IO Events
+
+The socket connection requires the JWT token in socket auth.
+
+| Event | Direction | Description |
+| --- | --- | --- |
+| `room:join` | client to server | Join a thread room after access validation. |
+| `chat:message:send` | client to server | Send encrypted message payload in real time. |
+| `chat:message:new` | server to client | Broadcast newly stored encrypted message metadata and payload. |
+
+---
+
+## Chat Encryption Model
+
+The current chat implementation uses browser-side encryption:
+
+1. Each browser generates an RSA-OAEP identity key pair and stores it in `localStorage`.
+2. The public key is uploaded to the backend with `/api/chat/keys/public`.
+3. When a chat request is created, the client generates an AES-GCM thread key.
+4. The AES-GCM thread key is wrapped separately for each participant using RSA-OAEP.
+5. Message text is encrypted in the browser using AES-GCM.
+6. The server stores only encrypted message fields: `ciphertext`, `iv`, `authTag`, and `algorithm`.
+7. The receiving browser retrieves its encrypted thread key, unwraps it locally, and decrypts messages locally.
+
+Important: the current implementation does not use ECDH key exchange, despite older documentation references. It uses RSA-OAEP key wrapping plus AES-GCM message encryption.
+
+---
+
+## Testing and Quality Checks
+
+Run backend tests:
 
 ```bash
 cd src/server
 npm test
 ```
 
-Backend testing should cover:
+Current backend tests cover profile validation and `UserProfile` model behavior.
 
-- User registration
-- Login
-- Two-factor authentication
-- Protected routes
-- Admin-only routes
-- Message creation and retrieval
-- Input validation
-
-### Frontend Tests
+Run the frontend lint check:
 
 ```bash
 cd src/client
-npm test
+npm run lint
 ```
 
-Frontend testing should cover:
+Build the frontend:
 
-- Login form validation
-- Register form validation
-- Chat screen rendering
-- Message send flow
+```bash
+cd src/client
+npm run build
+```
 
-### Security Tests
+There is no frontend test script currently configured in `src/client/package.json`.
 
-Security testing should include:
+Optional security checks:
 
-- Repeated failed login attempts
-- Accessing protected routes without a token
-- Accessing admin routes as a normal user
-- Invalid or malicious input
-- Checking that plaintext messages are not stored in MongoDB
-- Checking that message tampering is rejected or detected
-- Running SAST with Semgrep or ESLint security rules
-- Running dependency checks with `npm audit`
-- Running a basic DAST scan with OWASP ZAP
-- Running secret scanning with Gitleaks
+```bash
+cd src/server
+npm audit
 
-### Performance and User Testing
-
-Keep this lightweight:
-
-- Test normal chat usage with multiple users.
-- Record basic response time or message delivery observations.
-- Collect short peer feedback from test users before the final report.
+cd ../client
+npm audit
+```
 
 ---
 
-## CI/CD Pipeline
+## Database and Maintenance Scripts
 
-The GitHub Actions pipeline should stay simple but must include the required DevSecOps stages:
+Create or synchronize profile indexes:
+
+```bash
+cd src/server
+npm run migrate:profiles
+```
+
+The database connection also unsets `googleId` and `phoneNumber` when they are `null` so MongoDB sparse unique indexes behave correctly for missing optional identity fields.
+
+Profile pictures are stored under:
 
 ```text
-Build -> SAST -> Test -> DAST -> Deploy
+src/server/uploads/profile-pictures/
 ```
 
-Recommended checks:
-
-- Semgrep or ESLint security rules
-- Jest tests
-- `npm audit`
-- OWASP ZAP baseline scan
-- Gitleaks
-
-The deploy stage can be simple, such as building the frontend and backend or deploying to a controlled staging environment. The goal is to show a working security-aware pipeline without overengineering the deployment.
+That directory is created automatically when the backend starts.
 
 ---
 
-## Monitoring and Incident Response
+## Security Logging and Monitoring
 
-The project should include basic security monitoring:
+The backend records security-relevant events in MongoDB, including:
 
-- Log successful and failed login attempts.
-- Log admin actions.
-- Log repeated failed authentication attempts.
-- Document one simulated incident, such as repeated failed logins, and explain the response.
+- Registration attempts.
+- Login success and failure.
+- MFA challenge, success, and failure.
+- Brute-force and repeated MFA failure indicators.
+- Admin actions.
+- Encrypted message storage events.
+- Message integrity metadata.
+- Suspicious alerts generated from log patterns.
+- DevSecOps scan metadata used by the admin dashboard.
 
----
-
-## Project Milestones
-
-| Week | Milestone | Status |
-|------|-----------|--------|
-| Week 5 | Project selection | Not started |
-| Week 6 | Project plan, repo setup, and threat model | Not started |
-| Week 8 | Authentication and basic chat working | Not started |
-| Week 10 | 2FA, encrypted messages, admin features, and CI/CD pipeline | Not started |
-| Week 12 | Final demo and presentation | Not started |
-| Week 13 | Final report submission | Not started |
+See `docs/logging-system.md` and `docs/LOGGING-SETUP.md` for additional logging design notes.
 
 ---
 
-## Documentation
+## Known Limitations and Future Improvements
 
-The project should include:
-
-- `docs/architecture.md` - system design and data flow
-- `docs/threat-model.md` - STRIDE threat model
-- `docs/api-docs.md` - REST API and Socket.IO events
-- `docs/testing-report.md` - test results and security testing evidence
-- `docs/incident-response.md` - simulated incident and response notes
-
----
-
-## Assessment Deliverables
-
-Final submission should include:
-
-- GitHub repository with source code, tests, documentation, and CI/CD files.
-- Evidence of regular commits from each team member.
-- Working prototype and live demonstration.
-- Presentation slides covering the project, security design, DevSecOps pipeline, testing results, challenges, and lessons learned.
-- Final report with screenshots, logs, security findings, remediation evidence, and references.
-- Completed assessment cover sheet, including contribution percentages and AI/tool use declaration.
+- Email OTPs are stored in memory, so they are lost when the server restarts. Redis or database-backed OTP storage would be more reliable.
+- SMTP is required for user-facing registration verification. If email delivery fails, the server still stores an OTP, but the user cannot retrieve it through the UI.
+- There is no admin creation or seeding script.
+- Google sign-in backend verification exists, but the visible login UI currently focuses on email/password and MFA.
+- Frontend tests are not configured.
+- CI/CD workflow files are not present in the repository.
+- Some admin dashboard DevSecOps and message metadata records are seeded as demo metadata when the dashboard is opened.
+- Ephemeral message metadata models and admin views exist, but automatic expiry/deletion worker behavior is not implemented.
+- Browser private keys are stored in `localStorage`, which is acceptable for this academic prototype but not a hardened production key-storage design.
+- Chat supports direct threads in the current UI; group thread metadata exists in models/admin views, but full group chat UX and group key management are not implemented.
+- `/api/health/env` exposes configuration status and should be protected or removed before production deployment.
 
 ---
 
-## Ethical Considerations
+## Ethical Use
 
-This project is for educational use only. All testing must be performed in a controlled environment owned by the project team.
+This project is for controlled educational use only. Security testing must be performed only against environments owned by the project team.
 
-The system should not be used for real private communication. It is designed to demonstrate secure software development concepts for an academic assessment.
-
-Admin users may view system metadata and security logs, but message content should remain encrypted.
-
----
-
-## Contributing
-
-This is a team academic project.
-
-Recommended workflow:
-
-1. Create a feature branch.
-2. Make focused commits.
-3. Open a pull request.
-4. Request review from a teammate.
-5. Merge only after tests pass.
-
-Use clear commit messages, for example:
-
-```text
-feat: add login endpoint
-fix: validate message input
-test: add auth route tests
-docs: update threat model
-```
+The system demonstrates secure software design concepts, but it has not been hardened for production use. Do not use it for real private or sensitive communication.
 
 ---
 
@@ -489,7 +534,17 @@ docs: update threat model
 - [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API)
 - [JWT Introduction](https://jwt.io/introduction)
 - [bcrypt npm package](https://www.npmjs.com/package/bcrypt)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [Zod Documentation](https://zod.dev/)
+
+---
+
+## Assumptions
+
+- The intended backend development port is `5000`.
+- The intended frontend development port is `5173`.
+- A local MongoDB database named `securechat` is acceptable for development.
+- Admin accounts are managed manually in MongoDB until an admin bootstrap flow is added.
+- The academic deliverable context from the original README remains accurate.
 
 ---
 
