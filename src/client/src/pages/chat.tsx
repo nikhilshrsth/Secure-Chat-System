@@ -185,6 +185,7 @@ function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [deleteMenuFor, setDeleteMenuFor] = useState<string | null>(null);
   const [requestEmail, setRequestEmail] = useState('');
   const [firstMessageInput, setFirstMessageInput] = useState('');
   const [searchedUser, setSearchedUser] = useState<SearchedUser | null>(null);
@@ -423,7 +424,7 @@ function ChatPage() {
       try {
         const identity = await getOrCreateIdentity();
         identityRef.current = identity;
-        if (!currentUser?.publicKey || currentUser.publicKey === identity.publicKey) {
+        try {
           await api.put('/api/chat/keys/public', {
             publicKey: identity.publicKey,
             keyExchangePublicKey: identity.keyExchangePublicKey,
@@ -435,6 +436,8 @@ function ChatPage() {
               keyExchangePublicKey: identity.keyExchangePublicKey,
             }));
           }
+        } catch {
+          // Non-fatal: thread loading continues. Key will be retried next bootstrap.
         }
 
         const urlThread = searchParams.get('thread') || '';
@@ -593,6 +596,22 @@ function ChatPage() {
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to reject request.' });
+    }
+  }
+
+  async function handleDeleteMessage(messageId: string, deleteFor: 'me' | 'everyone') {
+    setDeleteMenuFor(null);
+    // Optimistically remove from local state
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    try {
+      await api.delete(`/api/chat/threads/${activeThreadId}/messages/${messageId}`, {
+        data: { deleteFor },
+      });
+      // For 'everyone', the server emits chat:message:deleted via socket to other clients.
+      // For 'me', no broadcast needed — already removed locally.
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to delete message.' });
     }
   }
 
@@ -799,24 +818,59 @@ function ChatPage() {
               </div>
             </header>
 
-            <section className="chat-messages">
+            <section className="chat-messages" onClick={() => setDeleteMenuFor(null)}>
               {messages.map((message) => (
                 <article key={message.id} className={message.isOwn ? 'bubble own' : 'bubble'}>
-                  <p className="meta">
+                  <div className="meta">
                     <strong>{message.senderName}</strong>
                     <span>{formatTime(message.createdAt)}</span>
-                  </p>
+                    <span className="bubble-actions">
+                      <button
+                        type="button"
+                        className="reply-link"
+                        onClick={(e) => { e.stopPropagation(); setReplyTo(message); }}
+                      >
+                        Reply
+                      </button>
+                      <span className="msg-delete-wrap">
+                        <button
+                          type="button"
+                          className="reply-link delete-toggle"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteMenuFor((prev) => (prev === message.id ? null : message.id));
+                          }}
+                          aria-label="Delete message"
+                        >
+                          ✕
+                        </button>
+                        {deleteMenuFor === message.id && (
+                          <div className="msg-delete-menu" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMessage(message.id, 'me')}
+                            >
+                              Only for Me
+                            </button>
+                            {message.isOwn && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMessage(message.id, 'everyone')}
+                              >
+                                For Everyone
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </span>
+                    </span>
+                  </div>
                   {message.replyTo && (
                     <blockquote>
                       <strong>{message.replyTo.senderName}</strong>: {message.replyTo.text}
                     </blockquote>
                   )}
                   <p>{message.text}</p>
-                  {!message.replyTo && (
-                    <button type="button" className="reply-link" onClick={() => setReplyTo(message)}>
-                      Reply
-                    </button>
-                  )}
                 </article>
               ))}
               <div ref={messagesEndRef} />

@@ -10,6 +10,7 @@ const {
   listMessagesForThread,
   sendMessage,
   markMessageRead,
+  deleteMessage,
   assertThreadAccess,
   getEncryptedThreadKeyForUser,
   searchCustomerByEmail,
@@ -307,6 +308,34 @@ router.post('/threads/:threadId/messages/:messageId/read', async (req, res, next
     });
 
     res.status(200).json(result);
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.delete('/threads/:threadId/messages/:messageId', async (req, res, next) => {
+  try {
+    const deleteFor = String(req.body?.deleteFor || '');
+    if (deleteFor !== 'me' && deleteFor !== 'everyone') {
+      res.status(400);
+      return next(new Error('deleteFor must be "me" or "everyone"'));
+    }
+
+    const result = await deleteMessage({
+      messageId: req.params.messageId,
+      threadId: req.params.threadId,
+      userId: req.user._id,
+      deleteFor,
+    });
+
+    if (deleteFor === 'everyone') {
+      req.app.get('io')?.to(req.params.threadId).emit('chat:message:deleted', {
+        messageId: result.messageId,
+      });
+    }
+
+    res.json({ ok: true, ...result });
   } catch (error) {
     withStatus(res, error);
     next(error);

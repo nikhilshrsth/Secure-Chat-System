@@ -136,7 +136,7 @@ async function assertThreadAccess(threadId, userId) {
 }
 
 function mapMessage(message, currentUserId, replyMap = new Map()) {
-  const reply = replyMap.get(String(message.replyTo)) || null;
+  const reply = replyMap.get(String(message.replyTo?._id || message.replyTo)) || null;
 
   return {
     id: message._id,
@@ -182,14 +182,19 @@ async function verifyMessageIntegrity(messages) {
         return;
       }
 
-      await MessageIntegrityLog.create({
-        messageId: String(message._id),
-        threadId: String(message.threadId),
-        senderId: message.sender?._id || message.sender,
-        hashStatus: present ? 'mismatch' : 'missing',
-        verificationResult: 'failed',
-        actionTaken: 'message integrity verification failed during retrieval',
-      });
+      try {
+        await MessageIntegrityLog.create({
+          messageId: String(message._id),
+          threadId: String(message.threadId),
+          senderId: message.sender?._id || message.sender,
+          hashStatus: present ? 'mismatch' : 'missing',
+          verificationResult: 'failed',
+          actionTaken: 'message integrity verification failed during retrieval',
+        });
+      } catch (logError) {
+        // Non-fatal: integrity log failure must not block message retrieval.
+        console.error('MessageIntegrityLog.create failed:', logError.message);
+      }
     }),
   );
 }
@@ -363,7 +368,7 @@ async function updateGroupThread({ threadId, userId, name = '' }) {
 async function listThreadsForUser(userId) {
   const threads = await ChatThread.find({ participantIds: userId, status: { $ne: 'archived' } })
     .sort({ lastActivityAt: -1 })
-    .populate('participantIds', 'username email role isActive keyExchangePublicKey')
+    .populate('participantIds', 'username email role isActive publicKey keyExchangePublicKey')
     .lean();
 
   const enriched = await Promise.all(
@@ -383,6 +388,7 @@ async function listThreadsForUser(userId) {
           email: participant.email,
           role: participant.role,
           isActive: participant.isActive,
+          publicKey: participant.publicKey || null,
           keyExchangePublicKey: participant.keyExchangePublicKey || null,
         })),
         lastActivityAt: thread.lastActivityAt,
@@ -408,7 +414,12 @@ async function listMessagesForThread({ threadId, userId, limit = 50 }) {
   const thread = await assertThreadAccess(threadId, userId);
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
 
-  const messages = await Message.find({ threadId: thread._id })
+  const userObjectId = toObjectId(userId);
+  const messages = await Message.find({
+    threadId: thread._id,
+    deletedForEveryone: { $ne: true },
+    deletedFor: { $not: { $elemMatch: { $eq: userObjectId } } },
+  })
     .sort({ createdAt: -1 })
     .limit(boundedLimit)
     .populate('sender', 'username')
@@ -760,6 +771,34 @@ async function acceptChatRequest({ requestId, recipientId, logContext = {} }) {
   };
 }
 
+async function deleteMessage({ messageId, threadId, userId, deleteFor }) {
+  const thread = await assertThreadAccess(threadId, userId);
+
+  const message = await Message.findOne({ _id: messageId, threadId: thread._id });
+  if (!message) {
+    const error = new Error('Message not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (deleteFor === 'everyone') {
+    if (!isSameId(message.sender, userId)) {
+      const error = new Error('Only the sender can delete a message for everyone');
+      error.statusCode = 403;
+      throw error;
+    }
+    message.deletedForEveryone = true;
+  } else {
+    const alreadyDeleted = (message.deletedFor || []).some((id) => isSameId(id, userId));
+    if (!alreadyDeleted) {
+      message.deletedFor.push(toObjectId(userId));
+    }
+  }
+
+  await message.save();
+  return { messageId: String(message._id), deleteFor };
+}
+
 async function rejectChatRequest({ requestId, recipientId }) {
   const request = await ChatRequest.findById(requestId);
 
@@ -800,4 +839,5 @@ module.exports = {
   createChatRequest,
   acceptChatRequest,
   rejectChatRequest,
+  deleteMessage,
 };

@@ -52,7 +52,6 @@ function App() {
         if (cancelled) return
         const latestStoredUser = localStorage.getItem('secureChatUser')
         const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null
-        if (latestUser?.publicKey && latestUser.publicKey !== identity.publicKey) return
         const api = createApiClient()
         await api.put('/api/chat/keys/public', {
           publicKey: identity.publicKey,

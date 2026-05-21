@@ -233,10 +233,16 @@ export async function encryptThreadKeyForUser(
 
 export async function decryptThreadKeyForUser(encryptedThreadKey: string, identity: StoredIdentity): Promise<string> {
   if (encryptedThreadKey.startsWith('{')) {
+    let payload: Record<string, unknown> | null = null;
     try {
-      const payload = JSON.parse(encryptedThreadKey);
-      if (payload?.scheme === 'ecdh-p256-aes-gcm' && payload?.senderKeyExchangePublicKey) {
-        const sharedKey = await deriveSharedAesKey(identity, String(payload.senderKeyExchangePublicKey));
+      payload = JSON.parse(encryptedThreadKey);
+    } catch {
+      throw new Error('Thread key is in an invalid format (JSON parse failed)');
+    }
+
+    if (payload?.scheme === 'ecdh-p256-aes-gcm') {
+      try {
+        const sharedKey = await deriveSharedAesKey(identity, String(payload.senderKeyExchangePublicKey || ''));
         const ciphertext = base64ToBytes(String(payload.ciphertext || ''));
         const authTag = base64ToBytes(String(payload.authTag || ''));
         const combined = new Uint8Array(ciphertext.length + authTag.length);
@@ -250,15 +256,23 @@ export async function decryptThreadKeyForUser(encryptedThreadKey: string, identi
         );
 
         return bytesToBase64(new Uint8Array(decrypted));
+      } catch (cause) {
+        const msg = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`Failed to decrypt thread key (ECDH): ${msg || 'decryption failed — wrong device or stale key'}`);
       }
-    } catch (_error) {
-      // Fall back to legacy RSA decryption for backward compatibility.
     }
+
+    throw new Error(`Thread key uses an unsupported scheme: ${String(payload?.scheme ?? 'unknown')}`);
   }
 
-  const privateKey = await importPrivateKey(identity.privateKeyJwk);
-  const raw = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, base64ToBytes(encryptedThreadKey));
-  return bytesToBase64(new Uint8Array(raw));
+  try {
+    const privateKey = await importPrivateKey(identity.privateKeyJwk);
+    const raw = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, base64ToBytes(encryptedThreadKey));
+    return bytesToBase64(new Uint8Array(raw));
+  } catch (cause) {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Failed to decrypt thread key (RSA): ${msg || 'decryption failed — wrong device or stale key'}`);
+  }
 }
 
 export async function encryptMessageText(text: string, rawThreadKey: string): Promise<{ ciphertext: string; iv: string; authTag: string; algorithm: string }> {
@@ -287,11 +301,15 @@ export async function decryptMessageText(payload: { ciphertext: string; iv: stri
   combined.set(ciphertext, 0);
   combined.set(authTag, ciphertext.length);
 
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: base64ToBytes(payload.iv), tagLength: 128 },
-    key,
-    combined,
-  );
-
-  return new TextDecoder().decode(decrypted);
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: base64ToBytes(payload.iv), tagLength: 128 },
+      key,
+      combined,
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch (cause) {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Failed to decrypt message: ${msg || 'decryption failed'}`);
+  }
 }

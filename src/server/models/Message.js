@@ -65,6 +65,15 @@ const messageSchema = new mongoose.Schema(
       min: 5,
       max: 86400,
     },
+    deletedFor: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: [],
+    },
+    deletedForEveryone: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   {
     timestamps: true,

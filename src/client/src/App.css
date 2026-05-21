@@ -1626,6 +1626,69 @@
   padding: 0;
 }
 
+/* ── message bubble action row ────────────────────────────── */
+.bubble-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.bubble-actions .reply-link {
+  margin-top: 0;
+  font-size: 0.75rem;
+}
+
+.delete-toggle {
+  color: var(--ink-subtle);
+  font-size: 0.72rem;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.bubble:hover .delete-toggle,
+.delete-toggle:focus {
+  opacity: 1;
+  color: #b44;
+}
+
+.msg-delete-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.msg-delete-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.msg-delete-menu button {
+  border: 0;
+  background: transparent;
+  padding: 0.55rem 0.85rem;
+  text-align: left;
+  font-size: 0.85rem;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.msg-delete-menu button:hover {
+  background: var(--surface-strong);
+  color: #b44;
+}
+
 .reply-banner {
   border: 1px solid var(--line);
   border-radius: 10px;
