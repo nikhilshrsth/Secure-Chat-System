@@ -37,6 +37,15 @@ async function joinUserChatRooms(socket) {
   return threads.length;
 }
 
+function emitMessageToParticipants(io, result) {
+  (result.participantIds || []).forEach((participantId) => {
+    io.to(`user:${participantId}`).emit('chat:message:new', {
+      threadId: result.threadId,
+      message: result.payload,
+    });
+  });
+}
+
 function registerSocketHandlers(io) {
   io.use(async (socket, next) => {
     try {
@@ -122,10 +131,7 @@ function registerSocketHandlers(io) {
 
         socket.join(result.threadId);
 
-        io.to(result.threadId).emit('chat:message:new', {
-          threadId: result.threadId,
-          message: result.payload,
-        });
+        emitMessageToParticipants(io, result);
 
         if (typeof ack === 'function') {
           ack({ ok: true, message: result.payload });

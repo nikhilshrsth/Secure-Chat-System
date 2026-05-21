@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 
 const ChatThread = require('../models/ChatThread');
 const ChatRequest = require('../models/ChatRequest');
+const GroupMember = require('../models/GroupMember');
 const User = require('../models/User');
 const Message = require('../models/Message');
 const EphemeralMessageLog = require('../models/EphemeralMessageLog');
@@ -16,6 +17,12 @@ function toObjectId(value) {
 function isSameId(a, b) {
   if (!a || !b) return false;
   return String(a) === String(b);
+}
+
+function createError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 function validateEncryptedPayload(encryptedPayload) {
@@ -120,19 +127,113 @@ async function assertThreadAccess(threadId, userId) {
   const thread = await ChatThread.findById(threadId);
 
   if (!thread) {
-    const error = new Error('Chat thread not found');
-    error.statusCode = 404;
-    throw error;
+    throw createError('Chat thread not found', 404);
   }
 
-  const isParticipant = thread.participantIds.some((id) => isSameId(id, userId));
-  if (!isParticipant) {
-    const error = new Error('You are not a participant in this thread');
-    error.statusCode = 403;
-    throw error;
+  if (thread.status === 'archived') {
+    throw createError('Chat thread not found', 404);
   }
 
+  const isParticipant = (thread.participantIds || []).some((id) => isSameId(id, userId));
+
+  if (thread.threadType !== 'group') {
+    if (!isParticipant) {
+      throw createError('You are not a participant in this thread', 403);
+    }
+
+    return thread;
+  }
+
+  let membership = await GroupMember.findOne({ groupId: thread._id, userId });
+
+  if (!membership && isParticipant) {
+    const joinedAt = thread.createdAt || new Date();
+    membership = await GroupMember.findOneAndUpdate(
+      { groupId: thread._id, userId },
+      {
+        $setOnInsert: {
+          groupId: thread._id,
+          userId,
+          status: 'accepted',
+          invitedBy: thread.createdBy || userId,
+          invitedAt: joinedAt,
+          acceptedAt: joinedAt,
+          joinedAt,
+        },
+      },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+    );
+  }
+
+  if (!membership || membership.status !== 'accepted' || !membership.joinedAt || !isParticipant) {
+    throw createError('You must accept the group invitation before accessing this group', 403);
+  }
+
+  thread.$locals = thread.$locals || {};
+  thread.$locals.accessMembership = membership;
+  thread.accessMembership = membership;
   return thread;
+}
+
+function buildVisibleMessageQuery(thread, userId, extra = {}) {
+  const query = {
+    ...extra,
+    threadId: thread._id,
+  };
+
+  if (thread.threadType === 'group') {
+    const joinedAt = thread.accessMembership?.joinedAt || thread.$locals?.accessMembership?.joinedAt;
+    if (!joinedAt) {
+      throw createError('Accepted group membership is required to read messages', 403);
+    }
+    query.createdAt = {
+      ...(query.createdAt || {}),
+      $gte: joinedAt,
+    };
+  }
+
+  return query;
+}
+
+function mapGroupInvitation(invitation) {
+  const group = invitation.groupId || {};
+  const inviter = invitation.invitedBy || {};
+
+  return {
+    id: invitation._id,
+    groupId: group._id || invitation.groupId,
+    group: {
+      id: group._id || invitation.groupId,
+      name: group.name || null,
+      threadType: group.threadType || 'group',
+      createdAt: group.createdAt || null,
+    },
+    invitedBy: {
+      id: inviter._id || invitation.invitedBy,
+      username: inviter.username || 'Unknown',
+      email: inviter.email || null,
+    },
+    status: invitation.status,
+    invitedAt: invitation.invitedAt,
+  };
+}
+
+async function listAcceptedGroupMemberIds(threadOrId) {
+  const groupId = threadOrId?._id || threadOrId;
+  const memberships = await GroupMember.find({ groupId })
+    .select('userId status joinedAt')
+    .lean();
+
+  const membershipByUser = new Map(memberships.map((membership) => [String(membership.userId), membership]));
+  const accepted = memberships
+    .filter((membership) => membership.status === 'accepted' && membership.joinedAt)
+    .map((membership) => String(membership.userId));
+
+  const legacyAccepted = (threadOrId?.participantIds || [])
+    .map((id) => String(id))
+    .filter((id) => !membershipByUser.has(id));
+
+  return Array.from(new Set([...accepted, ...legacyAccepted]));
 }
 
 function mapMessage(message, currentUserId, replyMap = new Map()) {
@@ -213,12 +314,24 @@ async function deleteExpiredEphemeralMessages() {
   }
 
   const deletedIds = [];
+  const deletionEvents = [];
 
   for (const item of expired) {
     try {
       const deleted = await Message.deleteOne({ _id: item._id });
       if (deleted.deletedCount === 1) {
         deletedIds.push(String(item._id));
+        const thread = await ChatThread.findById(item.threadId)
+          .select('threadType participantIds')
+          .lean();
+        const participantIds = thread?.threadType === 'group'
+          ? await listAcceptedGroupMemberIds(thread)
+          : (thread?.participantIds || []).map((id) => String(id));
+        deletionEvents.push({
+          messageId: String(item._id),
+          threadId: String(item.threadId),
+          participantIds,
+        });
         await EphemeralMessageLog.findOneAndUpdate(
           { messageId: String(item._id) },
           {
@@ -252,6 +365,7 @@ async function deleteExpiredEphemeralMessages() {
   return {
     deletedCount: deletedIds.length,
     messageIds: deletedIds,
+    deletionEvents,
   };
 }
 
@@ -303,14 +417,14 @@ async function getOrCreateDirectThread(userId, participantId, participantKeys = 
 }
 
 async function createGroupThread({ creatorId, participantIds = [], participantKeys = [], name = '' }) {
-  const normalizedIds = Array.from(
-    new Set([String(creatorId), ...participantIds.map((id) => String(id))]),
+  const creator = String(creatorId);
+  const invitedIds = Array.from(
+    new Set(participantIds.map((id) => String(id)).filter((id) => id && id !== creator)),
   );
+  const normalizedIds = [creator, ...invitedIds];
 
   if (normalizedIds.length < 3) {
-    const error = new Error('A group chat requires at least 3 participants');
-    error.statusCode = 400;
-    throw error;
+    throw createError('A group chat requires the creator plus at least two invited customers', 400);
   }
 
   const users = await User.find({
@@ -328,35 +442,51 @@ async function createGroupThread({ creatorId, participantIds = [], participantKe
   }
 
   const normalizedParticipantKeys = normalizeParticipantKeys(participantKeys, normalizedIds);
+  const now = new Date();
 
   const thread = await ChatThread.create({
     threadType: 'group',
     name: String(name || '').trim() || null,
-    participantIds: normalizedIds.map((id) => toObjectId(id)),
+    participantIds: [toObjectId(creator)],
     createdBy: toObjectId(creatorId),
     status: 'active',
     metadataOnly: false,
     encryptedKeys: normalizedParticipantKeys,
-    lastActivityAt: new Date(),
+    lastActivityAt: now,
     messageCount: 0,
   });
+
+  await GroupMember.create([
+    {
+      groupId: thread._id,
+      userId: toObjectId(creator),
+      status: 'accepted',
+      invitedBy: toObjectId(creator),
+      invitedAt: now,
+      acceptedAt: now,
+      joinedAt: now,
+    },
+    ...invitedIds.map((id) => ({
+      groupId: thread._id,
+      userId: toObjectId(id),
+      status: 'pending',
+      invitedBy: toObjectId(creator),
+      invitedAt: now,
+      acceptedAt: null,
+      joinedAt: null,
+      declinedAt: null,
+      removedAt: null,
+    })),
+  ]);
 
   return thread;
 }
 
 async function updateGroupThread({ threadId, userId, name = '' }) {
-  const thread = await ChatThread.findById(threadId);
+  const thread = await assertThreadAccess(threadId, userId);
 
-  if (!thread || thread.status === 'archived' || thread.threadType !== 'group') {
-    const error = new Error('Group chat not found');
-    error.statusCode = 404;
-    throw error;
-  }
-
-  if (!thread.participantIds.some((id) => isSameId(id, userId))) {
-    const error = new Error('You are not a participant in this group');
-    error.statusCode = 403;
-    throw error;
+  if (thread.threadType !== 'group') {
+    throw createError('Group chat not found', 404);
   }
 
   thread.name = String(name || '').trim() || null;
@@ -365,18 +495,180 @@ async function updateGroupThread({ threadId, userId, name = '' }) {
   return thread;
 }
 
+async function inviteGroupMembers({ threadId, inviterId, participantIds = [], participantKeys = [] }) {
+  const thread = await assertThreadAccess(threadId, inviterId);
+
+  if (thread.threadType !== 'group') {
+    throw createError('Group chat not found', 404);
+  }
+
+  const inviteeIds = Array.from(
+    new Set(participantIds.map((id) => String(id)).filter((id) => id && id !== String(inviterId))),
+  );
+
+  if (inviteeIds.length === 0) {
+    throw createError('At least one invitee is required', 400);
+  }
+
+  const activeUsers = await User.find({
+    _id: { $in: inviteeIds },
+    isActive: true,
+    isLocked: false,
+  })
+    .select('_id')
+    .lean();
+
+  if (activeUsers.length !== inviteeIds.length) {
+    throw createError('One or more invitees are invalid or inactive', 400);
+  }
+
+  const acceptedMemberIds = await listAcceptedGroupMemberIds(thread);
+  const newInviteeIds = inviteeIds.filter((id) => !acceptedMemberIds.includes(id));
+
+  if (newInviteeIds.length === 0) {
+    throw createError('Selected users are already group members', 409);
+  }
+
+  const keysForInvitees = normalizeParticipantKeys(participantKeys, newInviteeIds);
+  const keyByUser = new Map((thread.encryptedKeys || []).map((item) => [String(item.userId), item.encryptedKey]));
+  keysForInvitees.forEach((item) => {
+    keyByUser.set(String(item.userId), item.encryptedKey);
+  });
+  thread.encryptedKeys = Array.from(keyByUser.entries()).map(([id, encryptedKey]) => ({
+    userId: id,
+    encryptedKey,
+  }));
+  await thread.save();
+
+  const now = new Date();
+  await Promise.all(
+    newInviteeIds.map((id) => GroupMember.findOneAndUpdate(
+      { groupId: thread._id, userId: id },
+      {
+        $set: {
+          status: 'pending',
+          invitedBy: inviterId,
+          invitedAt: now,
+          acceptedAt: null,
+          joinedAt: null,
+          declinedAt: null,
+          removedAt: null,
+        },
+        $setOnInsert: {
+          groupId: thread._id,
+          userId: id,
+        },
+      },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+    )),
+  );
+
+  return { threadId: String(thread._id), groupName: thread.name || null, invitedUserIds: newInviteeIds };
+}
+
+async function listGroupInvitations(userId) {
+  const invitations = await GroupMember.find({ userId, status: 'pending' })
+    .sort({ invitedAt: -1 })
+    .populate('groupId', 'name threadType createdAt status')
+    .populate('invitedBy', 'username email')
+    .lean();
+
+  return invitations
+    .filter((invitation) => invitation.groupId && invitation.groupId.status !== 'archived')
+    .map(mapGroupInvitation);
+}
+
+async function acceptGroupInvitation({ invitationId, userId }) {
+  const invitation = await GroupMember.findById(invitationId);
+
+  if (!invitation || invitation.status !== 'pending') {
+    throw createError('Group invitation not found or no longer pending', 404);
+  }
+
+  if (!isSameId(invitation.userId, userId)) {
+    throw createError('You are not allowed to accept this group invitation', 403);
+  }
+
+  const thread = await ChatThread.findById(invitation.groupId);
+  if (!thread || thread.threadType !== 'group' || thread.status === 'archived') {
+    throw createError('Group chat not found', 404);
+  }
+
+  const now = new Date();
+  invitation.status = 'accepted';
+  invitation.acceptedAt = now;
+  invitation.joinedAt = now;
+  invitation.declinedAt = null;
+  invitation.removedAt = null;
+  await invitation.save();
+
+  await ChatThread.findByIdAndUpdate(thread._id, {
+    $addToSet: { participantIds: toObjectId(userId) },
+    $set: { lastActivityAt: thread.lastActivityAt || now },
+  });
+
+  return {
+    invitationId: invitation._id,
+    threadId: thread._id,
+    joinedAt: invitation.joinedAt,
+  };
+}
+
+async function declineGroupInvitation({ invitationId, userId }) {
+  const invitation = await GroupMember.findById(invitationId);
+
+  if (!invitation || invitation.status !== 'pending') {
+    throw createError('Group invitation not found or no longer pending', 404);
+  }
+
+  if (!isSameId(invitation.userId, userId)) {
+    throw createError('You are not allowed to decline this group invitation', 403);
+  }
+
+  invitation.status = 'declined';
+  invitation.declinedAt = new Date();
+  invitation.acceptedAt = null;
+  invitation.joinedAt = null;
+  await invitation.save();
+
+  return { ok: true, invitationId: invitation._id };
+}
+
 async function listThreadsForUser(userId) {
   const threads = await ChatThread.find({ participantIds: userId, status: { $ne: 'archived' } })
     .sort({ lastActivityAt: -1 })
     .populate('participantIds', 'username email role isActive publicKey keyExchangePublicKey')
     .lean();
 
+  const groupIds = threads
+    .filter((thread) => thread.threadType === 'group')
+    .map((thread) => thread._id);
+  const memberships = groupIds.length > 0
+    ? await GroupMember.find({ groupId: { $in: groupIds }, userId, status: 'accepted' }).lean()
+    : [];
+  const membershipByGroup = new Map(memberships.map((membership) => [String(membership.groupId), membership]));
+
   const enriched = await Promise.all(
     threads.map(async (thread) => {
-      const lastMessage = await Message.findOne({ threadId: thread._id })
-        .sort({ createdAt: -1 })
-        .populate('sender', 'username')
-        .lean();
+      const membership = membershipByGroup.get(String(thread._id));
+      const lastMessageQuery = { threadId: thread._id };
+      if (thread.threadType === 'group' && membership?.joinedAt) {
+        lastMessageQuery.createdAt = { $gte: membership.joinedAt };
+      }
+
+      const [lastMessage, visibleMessageCount] = await Promise.all([
+        Message.findOne(lastMessageQuery)
+          .sort({ createdAt: -1 })
+          .populate('sender', 'username')
+          .lean(),
+        thread.threadType === 'group' && membership?.joinedAt
+          ? Message.countDocuments(lastMessageQuery)
+          : Promise.resolve(thread.messageCount),
+      ]);
+
+      const visibleLastActivityAt = thread.threadType === 'group' && membership?.joinedAt
+        ? (lastMessage?.createdAt || membership.joinedAt)
+        : thread.lastActivityAt;
 
       return {
         id: thread._id,
@@ -391,8 +683,8 @@ async function listThreadsForUser(userId) {
           publicKey: participant.publicKey || null,
           keyExchangePublicKey: participant.keyExchangePublicKey || null,
         })),
-        lastActivityAt: thread.lastActivityAt,
-        messageCount: thread.messageCount,
+        lastActivityAt: visibleLastActivityAt,
+        messageCount: visibleMessageCount,
         lastMessage: lastMessage
           ? {
               id: lastMessage._id,
@@ -415,11 +707,10 @@ async function listMessagesForThread({ threadId, userId, limit = 50 }) {
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
 
   const userObjectId = toObjectId(userId);
-  const messages = await Message.find({
-    threadId: thread._id,
+  const messages = await Message.find(buildVisibleMessageQuery(thread, userId, {
     deletedForEveryone: { $ne: true },
     deletedFor: { $not: { $elemMatch: { $eq: userObjectId } } },
-  })
+  }))
     .sort({ createdAt: -1 })
     .limit(boundedLimit)
     .populate('sender', 'username')
@@ -453,7 +744,8 @@ async function sendMessage({
 
   let replyTo = null;
   if (replyToMessageId) {
-    replyTo = await Message.findOne({ _id: replyToMessageId, threadId: thread._id }).populate('sender', 'username');
+    replyTo = await Message.findOne(buildVisibleMessageQuery(thread, senderId, { _id: replyToMessageId }))
+      .populate('sender', 'username');
 
     if (!replyTo) {
       const error = new Error('Reply target message not found');
@@ -469,7 +761,9 @@ async function sendMessage({
     }
   }
 
-  const participants = (thread.participantIds || []).map((id) => String(id));
+  const participants = thread.threadType === 'group'
+    ? await listAcceptedGroupMemberIds(thread)
+    : (thread.participantIds || []).map((id) => String(id));
   const receiverId = thread.threadType === 'direct'
     ? participants.find((id) => id !== String(senderId)) || null
     : null;
@@ -543,7 +837,7 @@ async function sendMessage({
 async function markMessageRead({ threadId, messageId, userId }) {
   const thread = await assertThreadAccess(threadId, userId);
 
-  const message = await Message.findOne({ _id: messageId, threadId: thread._id });
+  const message = await Message.findOne(buildVisibleMessageQuery(thread, userId, { _id: messageId }));
   if (!message) {
     const error = new Error('Message not found');
     error.statusCode = 404;
@@ -774,7 +1068,7 @@ async function acceptChatRequest({ requestId, recipientId, logContext = {} }) {
 async function deleteMessage({ messageId, threadId, userId, deleteFor }) {
   const thread = await assertThreadAccess(threadId, userId);
 
-  const message = await Message.findOne({ _id: messageId, threadId: thread._id });
+  const message = await Message.findOne(buildVisibleMessageQuery(thread, userId, { _id: messageId }));
   if (!message) {
     const error = new Error('Message not found');
     error.statusCode = 404;
@@ -796,7 +1090,11 @@ async function deleteMessage({ messageId, threadId, userId, deleteFor }) {
   }
 
   await message.save();
-  return { messageId: String(message._id), deleteFor };
+  const participantIds = thread.threadType === 'group'
+    ? await listAcceptedGroupMemberIds(thread)
+    : (thread.participantIds || []).map((id) => String(id));
+
+  return { messageId: String(message._id), deleteFor, participantIds };
 }
 
 async function rejectChatRequest({ requestId, recipientId }) {
@@ -826,6 +1124,10 @@ module.exports = {
   getOrCreateDirectThread,
   createGroupThread,
   updateGroupThread,
+  inviteGroupMembers,
+  listGroupInvitations,
+  acceptGroupInvitation,
+  declineGroupInvitation,
   listThreadsForUser,
   listMessagesForThread,
   sendMessage,
@@ -840,4 +1142,6 @@ module.exports = {
   acceptChatRequest,
   rejectChatRequest,
   deleteMessage,
+  listAcceptedGroupMemberIds,
+  buildVisibleMessageQuery,
 };

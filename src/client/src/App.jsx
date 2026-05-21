@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { io } from 'socket.io-client'
 import AdminDashboardPage from './pages/admin'
 import ChatPage from './pages/chat'
 import ContactsPage from './pages/contacts'
@@ -18,6 +19,8 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('secureChatTheme') || 'light')
   const [token, setToken] = useState(() => localStorage.getItem('secureChatToken'))
   const [navOpen, setNavOpen] = useState(false)
+  const [groupInviteNotice, setGroupInviteNotice] = useState(null)
+  const notificationSocketRef = useRef(null)
   const storedUser = localStorage.getItem('secureChatUser')
   const currentUser = storedUser ? JSON.parse(storedUser) : null
   const isAdmin = currentUser?.role === 'admin'
@@ -72,6 +75,41 @@ function App() {
       cancelled = true
     }
   }, [token])
+
+  useEffect(() => {
+    if (!token || isAdmin) return undefined
+
+    const socketOptions = {
+      auth: { token },
+      path: '/socket.io',
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
+    }
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || ''
+    const socket = socketUrl ? io(socketUrl, socketOptions) : io(socketOptions)
+    notificationSocketRef.current = socket
+
+    socket.on('group:invitation:new', (payload) => {
+      const notice = {
+        threadId: payload?.threadId || payload?.group?.id || '',
+        groupName: payload?.group?.name || 'Encrypted group',
+        inviterName: payload?.invitedBy?.username || 'A customer',
+        invitedAt: payload?.invitedAt || new Date().toISOString(),
+      }
+      setGroupInviteNotice(notice)
+      window.dispatchEvent(new CustomEvent('securechat-group-invitation', { detail: notice }))
+    })
+
+    return () => {
+      socket.disconnect()
+      if (notificationSocketRef.current === socket) {
+        notificationSocketRef.current = null
+      }
+    }
+  }, [token, isAdmin])
 
   function handleSignOut() {
     localStorage.removeItem('secureChatToken')
@@ -138,6 +176,27 @@ function App() {
               </div>
             </div>
           </header>
+        )}
+        {groupInviteNotice && !isAdmin && (
+          <div className="group-invite-toast" role="status" aria-live="polite">
+            <div>
+              <strong>New group invitation</strong>
+              <span>{groupInviteNotice.inviterName} invited you to {groupInviteNotice.groupName}.</span>
+            </div>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setGroupInviteNotice(null)
+                navigate('/groups')
+              }}
+            >
+              View
+            </button>
+            <button type="button" className="toast-dismiss" aria-label="Dismiss invitation notice" onClick={() => setGroupInviteNotice(null)}>
+              x
+            </button>
+          </div>
         )}
         <div className="app-page">
           <Routes>

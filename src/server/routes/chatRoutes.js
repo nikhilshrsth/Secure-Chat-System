@@ -6,6 +6,10 @@ const {
   getOrCreateDirectThread,
   createGroupThread,
   updateGroupThread,
+  inviteGroupMembers,
+  listGroupInvitations,
+  acceptGroupInvitation,
+  declineGroupInvitation,
   listThreadsForUser,
   listMessagesForThread,
   sendMessage,
@@ -34,6 +38,34 @@ function getLogContext(req) {
     ipAddress: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || req.ip || null,
     userAgent: req.headers['user-agent'] || null,
   };
+}
+
+function emitMessageToParticipants(io, result) {
+  (result.participantIds || []).forEach((participantId) => {
+    io?.to(`user:${participantId}`).emit('chat:message:new', {
+      threadId: result.threadId,
+      message: result.payload,
+    });
+  });
+}
+
+function emitGroupInvitations(io, { invitedUserIds = [], threadId, groupName, inviter, invitedAt = new Date() }) {
+  const uniqueInvitees = Array.from(new Set(invitedUserIds.map((id) => String(id)).filter(Boolean)));
+  uniqueInvitees.forEach((userId) => {
+    io?.to(`user:${userId}`).emit('group:invitation:new', {
+      threadId: String(threadId),
+      group: {
+        id: String(threadId),
+        name: groupName || null,
+      },
+      invitedBy: {
+        id: String(inviter?._id || inviter?.id || ''),
+        username: inviter?.username || 'A customer',
+        email: inviter?.email || null,
+      },
+      invitedAt,
+    });
+  });
 }
 
 router.use(protect);
@@ -121,9 +153,11 @@ router.post('/requests/:requestId/accept', async (req, res, next) => {
       io?.in(`user:${participantId}`).socketsJoin(threadId);
     });
 
-    io?.to(threadId).emit('chat:message:new', {
-      threadId,
-      message: result.initialMessage,
+    (result.participantIds || []).forEach((participantId) => {
+      io?.to(`user:${participantId}`).emit('chat:message:new', {
+        threadId,
+        message: result.initialMessage,
+      });
     });
 
     res.status(200).json(result);
@@ -182,6 +216,53 @@ router.get('/threads', async (req, res, next) => {
   }
 });
 
+router.get('/groups/invitations', async (req, res, next) => {
+  try {
+    const invitations = await listGroupInvitations(req.user._id);
+    res.json({ invitations });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.post('/groups/invitations/:invitationId/accept', async (req, res, next) => {
+  try {
+    const result = await acceptGroupInvitation({
+      invitationId: req.params.invitationId,
+      userId: req.user._id,
+    });
+
+    const threadId = String(result.threadId);
+    const userId = String(req.user._id);
+    req.app.get('io')?.in(`user:${userId}`).socketsJoin(threadId);
+    req.app.get('io')?.to(`user:${userId}`).emit('group:invitation:accepted', {
+      threadId,
+      invitationId: String(result.invitationId),
+      joinedAt: result.joinedAt,
+    });
+
+    res.status(200).json(result);
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.post('/groups/invitations/:invitationId/decline', async (req, res, next) => {
+  try {
+    const result = await declineGroupInvitation({
+      invitationId: req.params.invitationId,
+      userId: req.user._id,
+    });
+
+    res.status(200).json(result);
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
 router.post('/threads/direct', async (req, res, next) => {
   try {
     const { participantId, participantKeys } = req.body;
@@ -208,6 +289,17 @@ router.post('/threads/group', async (req, res, next) => {
       participantIds,
       participantKeys,
       name,
+    });
+    const invitedUserIds = Array.from(
+      new Set((participantIds || []).map((id) => String(id)).filter((id) => id && id !== String(req.user._id))),
+    );
+
+    emitGroupInvitations(req.app.get('io'), {
+      invitedUserIds,
+      threadId: thread._id,
+      groupName: thread.name,
+      inviter: req.user,
+      invitedAt: thread.createdAt || new Date(),
     });
 
     res.status(201).json({
@@ -242,6 +334,29 @@ router.put('/threads/:threadId/group', async (req, res, next) => {
         lastActivityAt: thread.lastActivityAt,
       },
     });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.post('/threads/:threadId/group/invitations', async (req, res, next) => {
+  try {
+    const result = await inviteGroupMembers({
+      threadId: req.params.threadId,
+      inviterId: req.user._id,
+      participantIds: req.body?.participantIds,
+      participantKeys: req.body?.participantKeys,
+    });
+
+    emitGroupInvitations(req.app.get('io'), {
+      invitedUserIds: result.invitedUserIds || [],
+      threadId: result.threadId,
+      groupName: result.groupName || null,
+      inviter: req.user,
+    });
+
+    res.status(201).json(result);
   } catch (error) {
     withStatus(res, error);
     next(error);
@@ -287,10 +402,7 @@ router.post('/threads/:threadId/messages', async (req, res, next) => {
       logContext: getLogContext(req),
     });
 
-    req.app.get('io')?.to(result.threadId).emit('chat:message:new', {
-      threadId: result.threadId,
-      message: result.payload,
-    });
+    emitMessageToParticipants(req.app.get('io'), result);
 
     res.status(201).json({ message: result.payload });
   } catch (error) {
@@ -330,8 +442,11 @@ router.delete('/threads/:threadId/messages/:messageId', async (req, res, next) =
     });
 
     if (deleteFor === 'everyone') {
-      req.app.get('io')?.to(req.params.threadId).emit('chat:message:deleted', {
-        messageId: result.messageId,
+      const io = req.app.get('io');
+      (result.participantIds || []).forEach((participantId) => {
+        io?.to(`user:${participantId}`).emit('chat:message:deleted', {
+          messageId: result.messageId,
+        });
       });
     }
 

@@ -33,6 +33,23 @@ type ChatUser = {
   keyExchangePublicKey?: string | null;
 };
 
+type GroupInvitation = {
+  id: string;
+  groupId: string;
+  group: {
+    id: string;
+    name?: string | null;
+    createdAt?: string | null;
+  };
+  invitedBy: {
+    id: string;
+    username: string;
+    email?: string | null;
+  };
+  status: string;
+  invitedAt: string;
+};
+
 type RawChatUser = {
   id?: string;
   _id?: string;
@@ -65,6 +82,7 @@ function GroupsPage() {
   }, []);
 
   const [groups, setGroups] = useState<ChatThread[]>([]);
+  const [groupInvitations, setGroupInvitations] = useState<GroupInvitation[]>([]);
   const [availableUsers, setAvailableUsers] = useState<ChatUser[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [manageName, setManageName] = useState('');
@@ -73,6 +91,7 @@ function GroupsPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [savingName, setSavingName] = useState(false);
+  const [decidingInviteId, setDecidingInviteId] = useState('');
   const [status, setStatus] = useState({ type: '', message: '' });
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) || groups[0] || null;
@@ -107,6 +126,26 @@ function GroupsPage() {
     setAvailableUsers(normalizedUsers);
   }
 
+  async function refreshInvitations() {
+    const response = await api.get('/api/chat/groups/invitations');
+    setGroupInvitations(response.data.invitations || []);
+  }
+
+  useEffect(() => {
+    async function handleGroupInvitation() {
+      try {
+        await refreshInvitations();
+        setStatus({ type: 'success', message: 'New group invitation received.' });
+      } catch {
+        // The next page load will fetch pending invitations again.
+      }
+    }
+
+    window.addEventListener('securechat-group-invitation', handleGroupInvitation);
+    return () => window.removeEventListener('securechat-group-invitation', handleGroupInvitation);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -116,7 +155,7 @@ function GroupsPage() {
           publicKey: identity.publicKey,
           keyExchangePublicKey: identity.keyExchangePublicKey,
         });
-        await Promise.all([refreshGroups(), refreshUsers()]);
+        await Promise.all([refreshGroups(), refreshUsers(), refreshInvitations()]);
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
         setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load groups.' });
@@ -183,7 +222,7 @@ function GroupsPage() {
       const threadId = String(response.data?.thread?.id || '');
       setGroupName('');
       setGroupParticipantIds([]);
-      setStatus({ type: 'success', message: 'Encrypted group created.' });
+      setStatus({ type: 'success', message: 'Encrypted group created and invitations sent.' });
       await refreshGroups(threadId || undefined);
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
@@ -214,6 +253,42 @@ function GroupsPage() {
     }
   }
 
+  async function acceptInvitation(invitationId: string) {
+    setDecidingInviteId(invitationId);
+    setStatus({ type: '', message: '' });
+
+    try {
+      const response = await api.post(`/api/chat/groups/invitations/${invitationId}/accept`);
+      const threadId = String(response.data?.threadId || '');
+      await Promise.all([refreshGroups(threadId || undefined), refreshInvitations()]);
+      setStatus({ type: 'success', message: 'Group invitation accepted. Only new messages from this join time are available.' });
+      if (threadId) {
+        navigate(`/chat?thread=${threadId}`);
+      }
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to accept invitation.' });
+    } finally {
+      setDecidingInviteId('');
+    }
+  }
+
+  async function declineInvitation(invitationId: string) {
+    setDecidingInviteId(invitationId);
+    setStatus({ type: '', message: '' });
+
+    try {
+      await api.post(`/api/chat/groups/invitations/${invitationId}/decline`);
+      setStatus({ type: 'success', message: 'Group invitation declined.' });
+      await refreshInvitations();
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to decline invitation.' });
+    } finally {
+      setDecidingInviteId('');
+    }
+  }
+
   function toggleParticipant(userId: string, checked: boolean) {
     setGroupParticipantIds((previous) => (
       checked ? [...previous, userId] : previous.filter((id) => id !== userId)
@@ -238,6 +313,35 @@ function GroupsPage() {
         <div className="groups-layout">
           <aside className="groups-list-panel card">
             <h3>Existing groups</h3>
+            {groupInvitations.length > 0 && (
+              <div className="groups-invitations">
+                <h4>Pending invitations</h4>
+                {groupInvitations.map((invitation) => (
+                  <div key={invitation.id} className="groups-invitation">
+                    <strong>{invitation.group.name || 'Encrypted group'}</strong>
+                    <span>Invited by {invitation.invitedBy.username} - {formatDate(invitation.invitedAt)}</span>
+                    <div className="groups-actions compact">
+                      <button
+                        type="button"
+                        className="submit"
+                        onClick={() => acceptInvitation(invitation.id)}
+                        disabled={decidingInviteId === invitation.id}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => declineInvitation(invitation.id)}
+                        disabled={decidingInviteId === invitation.id}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {groups.length === 0 && <p className="empty-state">No groups yet. Create one to start a shared encrypted chat.</p>}
             <div className="groups-list">
               {groups.map((group) => (
@@ -326,7 +430,7 @@ function GroupsPage() {
             </div>
 
             <button type="button" className="submit" onClick={createGroup} disabled={creating}>
-              {creating ? 'Creating...' : 'Create encrypted group'}
+              {creating ? 'Creating...' : 'Create group invitations'}
             </button>
           </section>
         </div>

@@ -28,8 +28,10 @@ setInterval(async () => {
   try {
     const result = await deleteExpiredEphemeralMessages();
     if (result.deletedCount > 0) {
-      result.messageIds.forEach((messageId) => {
-        io.emit('chat:message:deleted', { messageId });
+      (result.deletionEvents || []).forEach((event) => {
+        (event.participantIds || []).forEach((participantId) => {
+          io.to(`user:${participantId}`).emit('chat:message:deleted', { messageId: event.messageId });
+        });
       });
     }
   } catch (_error) {
