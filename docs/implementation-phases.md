@@ -2,6 +2,8 @@
 
 This document breaks the project into simple build phases. The goal is to build a working system first, then add security features, tests, CI/CD, and documentation.
 
+For a requirement-by-requirement mapping of implemented features to code and routes, see `docs/feature-compliance.md`.
+
 ---
 
 ## Phase 1: Project Setup

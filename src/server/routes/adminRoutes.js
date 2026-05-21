@@ -129,7 +129,7 @@ async function upsertAlert({ userId = null, activityType, description, riskLevel
         status: 'open',
       },
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   );
 }
 

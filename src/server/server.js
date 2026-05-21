@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const app = require('./app');
 const connectDB = require('./config/db');
 const registerSocketHandlers = require('./sockets');
+const { deleteExpiredEphemeralMessages } = require('./services/chatService');
 
 const PORT = Number(process.env.PORT) || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
@@ -22,6 +23,19 @@ const io = new Server(server, {
 app.set('io', io);
 
 registerSocketHandlers(io);
+
+setInterval(async () => {
+  try {
+    const result = await deleteExpiredEphemeralMessages();
+    if (result.deletedCount > 0) {
+      result.messageIds.forEach((messageId) => {
+        io.emit('chat:message:deleted', { messageId });
+      });
+    }
+  } catch (_error) {
+    // Cleanup failures are non-fatal and should not terminate the API process.
+  }
+}, 30 * 1000);
 
 async function startServer() {
   await connectDB();

@@ -39,6 +39,11 @@ const messageSchema = new mongoose.Schema(
       type: String,
       default: 'aes-256-gcm',
     },
+    integrityHash: {
+      type: String,
+      default: null,
+      index: true,
+    },
     replyTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Message',
@@ -53,6 +58,12 @@ const messageSchema = new mongoose.Schema(
     readAt: {
       type: Date,
       default: null,
+    },
+    deleteAfterReadSeconds: {
+      type: Number,
+      default: null,
+      min: 5,
+      max: 86400,
     },
   },
   {

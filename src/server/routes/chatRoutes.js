@@ -4,9 +4,11 @@ const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
 const {
   getOrCreateDirectThread,
+  createGroupThread,
   listThreadsForUser,
   listMessagesForThread,
   sendMessage,
+  markMessageRead,
   assertThreadAccess,
   getEncryptedThreadKeyForUser,
   searchCustomerByEmail,
@@ -42,7 +44,7 @@ router.get('/users', async (req, res, next) => {
       isLocked: false,
       role: 'customer',
     })
-      .select('username email role publicKey')
+      .select('username email role publicKey keyExchangePublicKey')
       .sort({ username: 1 })
       .lean();
 
@@ -140,12 +142,19 @@ router.post('/requests/:requestId/reject', async (req, res, next) => {
 router.put('/keys/public', async (req, res, next) => {
   try {
     const publicKey = String(req.body?.publicKey || '').trim();
+    const keyExchangePublicKey = String(req.body?.keyExchangePublicKey || '').trim();
     if (!publicKey) {
       res.status(400);
       throw new Error('publicKey is required');
     }
 
+    if (!keyExchangePublicKey) {
+      res.status(400);
+      throw new Error('keyExchangePublicKey is required');
+    }
+
     req.user.publicKey = publicKey;
+    req.user.keyExchangePublicKey = keyExchangePublicKey;
     await req.user.save();
 
     res.json({ ok: true });
@@ -183,6 +192,31 @@ router.post('/threads/direct', async (req, res, next) => {
   }
 });
 
+router.post('/threads/group', async (req, res, next) => {
+  try {
+    const { participantIds, participantKeys, name } = req.body;
+    const thread = await createGroupThread({
+      creatorId: req.user._id,
+      participantIds,
+      participantKeys,
+      name,
+    });
+
+    res.status(201).json({
+      thread: {
+        id: thread._id,
+        threadType: thread.threadType,
+        name: thread.name || null,
+        participantIds: thread.participantIds,
+        lastActivityAt: thread.lastActivityAt,
+      },
+    });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
 router.get('/threads/:threadId/key', async (req, res, next) => {
   try {
     const encryptedKey = await getEncryptedThreadKeyForUser(req.params.threadId, req.user._id);
@@ -210,7 +244,7 @@ router.get('/threads/:threadId/messages', async (req, res, next) => {
 
 router.post('/threads/:threadId/messages', async (req, res, next) => {
   try {
-    const { encryptedPayload, replyToMessageId, clientMessageId } = req.body;
+    const { encryptedPayload, replyToMessageId, clientMessageId, deleteAfterReadSeconds } = req.body;
 
     const result = await sendMessage({
       threadId: req.params.threadId,
@@ -218,6 +252,7 @@ router.post('/threads/:threadId/messages', async (req, res, next) => {
       text: encryptedPayload,
       replyToMessageId,
       clientMessageId,
+      deleteAfterReadSeconds,
       logContext: getLogContext(req),
     });
 
@@ -227,6 +262,21 @@ router.post('/threads/:threadId/messages', async (req, res, next) => {
     });
 
     res.status(201).json({ message: result.payload });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.post('/threads/:threadId/messages/:messageId/read', async (req, res, next) => {
+  try {
+    const result = await markMessageRead({
+      threadId: req.params.threadId,
+      messageId: req.params.messageId,
+      userId: req.user._id,
+    });
+
+    res.status(200).json(result);
   } catch (error) {
     withStatus(res, error);
     next(error);

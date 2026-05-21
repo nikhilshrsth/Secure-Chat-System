@@ -1,9 +1,11 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const ChatThread = require('../models/ChatThread');
 const ChatRequest = require('../models/ChatRequest');
 const User = require('../models/User');
 const Message = require('../models/Message');
+const EphemeralMessageLog = require('../models/EphemeralMessageLog');
 const MessageIntegrityLog = require('../models/MessageIntegrityLog');
 const Logger = require('./logger');
 
@@ -52,6 +54,32 @@ function validateEncryptedPayload(encryptedPayload) {
     authTag,
     algorithm: 'aes-256-gcm',
   };
+}
+
+function computeIntegrityHash(payload) {
+  const joined = [
+    String(payload?.ciphertext || ''),
+    String(payload?.iv || ''),
+    String(payload?.authTag || ''),
+    String(payload?.algorithm || ''),
+  ].join('|');
+
+  return crypto.createHash('sha256').update(joined).digest('hex');
+}
+
+function normalizeDeleteAfterReadSeconds(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 5 || parsed > 86400) {
+    const error = new Error('deleteAfterReadSeconds must be between 5 and 86400');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return Math.floor(parsed);
 }
 
 function normalizeParticipantKeys(participantKeys, participantIds) {
@@ -125,6 +153,8 @@ function mapMessage(message, currentUserId, replyMap = new Map()) {
     isOwn: isSameId(message.sender?._id || message.sender, currentUserId),
     createdAt: message.createdAt,
     readAt: message.readAt,
+    expiresAt: message.expiresAt,
+    deleteAfterReadSeconds: message.deleteAfterReadSeconds || null,
     replyTo: reply
       ? {
           id: reply._id,
@@ -132,6 +162,91 @@ function mapMessage(message, currentUserId, replyMap = new Map()) {
           senderName: reply.sender?.username || 'Unknown',
         }
       : null,
+  };
+}
+
+async function verifyMessageIntegrity(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return;
+
+  await Promise.all(
+    messages.map(async (message) => {
+      const expected = computeIntegrityHash({
+        ciphertext: message.ciphertext,
+        iv: message.iv,
+        authTag: message.authTag,
+        algorithm: message.algorithm,
+      });
+
+      const present = String(message.integrityHash || '');
+      if (present && present === expected) {
+        return;
+      }
+
+      await MessageIntegrityLog.create({
+        messageId: String(message._id),
+        threadId: String(message.threadId),
+        senderId: message.sender?._id || message.sender,
+        hashStatus: present ? 'mismatch' : 'missing',
+        verificationResult: 'failed',
+        actionTaken: 'message integrity verification failed during retrieval',
+      });
+    }),
+  );
+}
+
+async function deleteExpiredEphemeralMessages() {
+  const now = new Date();
+  const expired = await Message.find({
+    expiresAt: { $lte: now },
+    deleteAfterReadSeconds: { $ne: null },
+  })
+    .select('_id threadId sender expiresAt')
+    .lean();
+
+  if (expired.length === 0) {
+    return { deletedCount: 0, messageIds: [] };
+  }
+
+  const deletedIds = [];
+
+  for (const item of expired) {
+    try {
+      const deleted = await Message.deleteOne({ _id: item._id });
+      if (deleted.deletedCount === 1) {
+        deletedIds.push(String(item._id));
+        await EphemeralMessageLog.findOneAndUpdate(
+          { messageId: String(item._id) },
+          {
+            $set: {
+              threadId: String(item.threadId),
+              senderId: item.sender,
+              expiryAt: item.expiresAt,
+              deletionStatus: 'deleted',
+              deletedAt: now,
+            },
+          },
+          { upsert: true, returnDocument: 'after' },
+        );
+      }
+    } catch (_error) {
+      await EphemeralMessageLog.findOneAndUpdate(
+        { messageId: String(item._id) },
+        {
+          $set: {
+            threadId: String(item.threadId),
+            senderId: item.sender,
+            expiryAt: item.expiresAt,
+            deletionStatus: 'failed',
+          },
+        },
+        { upsert: true, returnDocument: 'after' },
+      );
+    }
+  }
+
+  return {
+    deletedCount: deletedIds.length,
+    messageIds: deletedIds,
   };
 }
 
@@ -182,10 +297,52 @@ async function getOrCreateDirectThread(userId, participantId, participantKeys = 
   return thread;
 }
 
+async function createGroupThread({ creatorId, participantIds = [], participantKeys = [], name = '' }) {
+  const normalizedIds = Array.from(
+    new Set([String(creatorId), ...participantIds.map((id) => String(id))]),
+  );
+
+  if (normalizedIds.length < 3) {
+    const error = new Error('A group chat requires at least 3 participants');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const users = await User.find({
+    _id: { $in: normalizedIds },
+    isActive: true,
+    isLocked: false,
+  })
+    .select('_id')
+    .lean();
+
+  if (users.length !== normalizedIds.length) {
+    const error = new Error('One or more participants are invalid or inactive');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedParticipantKeys = normalizeParticipantKeys(participantKeys, normalizedIds);
+
+  const thread = await ChatThread.create({
+    threadType: 'group',
+    name: String(name || '').trim() || null,
+    participantIds: normalizedIds.map((id) => toObjectId(id)),
+    createdBy: toObjectId(creatorId),
+    status: 'active',
+    metadataOnly: false,
+    encryptedKeys: normalizedParticipantKeys,
+    lastActivityAt: new Date(),
+    messageCount: 0,
+  });
+
+  return thread;
+}
+
 async function listThreadsForUser(userId) {
   const threads = await ChatThread.find({ participantIds: userId, status: { $ne: 'archived' } })
     .sort({ lastActivityAt: -1 })
-    .populate('participantIds', 'username email role isActive')
+    .populate('participantIds', 'username email role isActive keyExchangePublicKey')
     .lean();
 
   const enriched = await Promise.all(
@@ -198,12 +355,14 @@ async function listThreadsForUser(userId) {
       return {
         id: thread._id,
         threadType: thread.threadType,
+        name: thread.name || null,
         participants: (thread.participantIds || []).map((participant) => ({
           id: participant._id,
           username: participant.username,
           email: participant.email,
           role: participant.role,
           isActive: participant.isActive,
+          keyExchangePublicKey: participant.keyExchangePublicKey || null,
         })),
         lastActivityAt: thread.lastActivityAt,
         messageCount: thread.messageCount,
@@ -223,6 +382,8 @@ async function listThreadsForUser(userId) {
 }
 
 async function listMessagesForThread({ threadId, userId, limit = 50 }) {
+  await deleteExpiredEphemeralMessages();
+
   const thread = await assertThreadAccess(threadId, userId);
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 50, 100));
 
@@ -233,6 +394,7 @@ async function listMessagesForThread({ threadId, userId, limit = 50 }) {
     .populate({ path: 'replyTo', populate: { path: 'sender', select: 'username' } });
 
   const ordered = [...messages].reverse();
+  await verifyMessageIntegrity(ordered);
   const replyMap = new Map();
 
   ordered.forEach((message) => {
@@ -244,8 +406,17 @@ async function listMessagesForThread({ threadId, userId, limit = 50 }) {
   return ordered.map((message) => mapMessage(message, userId, replyMap));
 }
 
-async function sendMessage({ threadId, senderId, text, replyToMessageId = null, clientMessageId = null, logContext = {} }) {
+async function sendMessage({
+  threadId,
+  senderId,
+  text,
+  replyToMessageId = null,
+  clientMessageId = null,
+  deleteAfterReadSeconds = null,
+  logContext = {},
+}) {
   const normalizedEncryptedPayload = validateEncryptedPayload(text);
+  const normalizedDeleteAfterReadSeconds = normalizeDeleteAfterReadSeconds(deleteAfterReadSeconds);
   const thread = await assertThreadAccess(threadId, senderId);
 
   let replyTo = null;
@@ -280,7 +451,9 @@ async function sendMessage({ threadId, senderId, text, replyToMessageId = null, 
     iv: normalizedEncryptedPayload.iv,
     authTag: normalizedEncryptedPayload.authTag,
     algorithm: normalizedEncryptedPayload.algorithm,
+    integrityHash: computeIntegrityHash(normalizedEncryptedPayload),
     replyTo: replyTo ? replyTo._id : null,
+    deleteAfterReadSeconds: normalizedDeleteAfterReadSeconds,
   });
 
   await ChatThread.findByIdAndUpdate(thread._id, {
@@ -335,6 +508,51 @@ async function sendMessage({ threadId, senderId, text, replyToMessageId = null, 
   };
 }
 
+async function markMessageRead({ threadId, messageId, userId }) {
+  const thread = await assertThreadAccess(threadId, userId);
+
+  const message = await Message.findOne({ _id: messageId, threadId: thread._id });
+  if (!message) {
+    const error = new Error('Message not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (isSameId(message.sender, userId)) {
+    return { messageId: String(message._id), readAt: message.readAt, expiresAt: message.expiresAt };
+  }
+
+  if (!message.readAt) {
+    message.readAt = new Date();
+  }
+
+  if (message.deleteAfterReadSeconds && !message.expiresAt) {
+    message.expiresAt = new Date(message.readAt.getTime() + message.deleteAfterReadSeconds * 1000);
+
+    await EphemeralMessageLog.findOneAndUpdate(
+      { messageId: String(message._id) },
+      {
+        $set: {
+          threadId: String(message.threadId),
+          senderId: message.sender,
+          expiryAt: message.expiresAt,
+          deletionStatus: 'pending',
+          deletedAt: null,
+        },
+      },
+      { upsert: true, returnDocument: 'after' },
+    );
+  }
+
+  await message.save();
+
+  return {
+    messageId: String(message._id),
+    readAt: message.readAt,
+    expiresAt: message.expiresAt,
+  };
+}
+
 async function getEncryptedThreadKeyForUser(threadId, userId) {
   const thread = await assertThreadAccess(threadId, userId);
   const threadKey = (thread.encryptedKeys || []).find((item) => isSameId(item.userId, userId));
@@ -363,7 +581,7 @@ async function searchCustomerByEmail(email, requesterId) {
     isLocked: false,
     _id: { $ne: requesterId },
   })
-    .select('username email role publicKey')
+    .select('username email role publicKey keyExchangePublicKey')
     .lean();
 
   if (!user) {
@@ -378,13 +596,14 @@ async function searchCustomerByEmail(email, requesterId) {
     email: user.email,
     role: user.role,
     publicKey: user.publicKey,
+    keyExchangePublicKey: user.keyExchangePublicKey || null,
   };
 }
 
 async function listIncomingRequests(userId) {
   const requests = await ChatRequest.find({ recipientId: userId, status: 'pending' })
     .sort({ createdAt: -1 })
-    .populate('requesterId', 'username email publicKey')
+    .populate('requesterId', 'username email publicKey keyExchangePublicKey')
     .lean();
 
   return requests.map((request) => ({
@@ -394,6 +613,7 @@ async function listIncomingRequests(userId) {
       username: request.requesterId?.username,
       email: request.requesterId?.email,
       publicKey: request.requesterId?.publicKey || null,
+      keyExchangePublicKey: request.requesterId?.keyExchangePublicKey || null,
     },
     recipientId: request.recipientId,
     status: request.status,
@@ -470,7 +690,7 @@ async function createChatRequest({ requesterId, recipientEmail, encryptedPayload
         decidedAt: null,
       },
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   );
 
   return {
@@ -543,9 +763,12 @@ async function rejectChatRequest({ requestId, recipientId }) {
 
 module.exports = {
   getOrCreateDirectThread,
+  createGroupThread,
   listThreadsForUser,
   listMessagesForThread,
   sendMessage,
+  markMessageRead,
+  deleteExpiredEphemeralMessages,
   assertThreadAccess,
   getEncryptedThreadKeyForUser,
   searchCustomerByEmail,

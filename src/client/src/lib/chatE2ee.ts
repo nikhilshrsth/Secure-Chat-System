@@ -3,6 +3,8 @@ const IDENTITY_STORAGE_KEY = 'secureChatE2EEIdentityV1';
 type StoredIdentity = {
   publicKey: string;
   privateKeyJwk: JsonWebKey;
+  keyExchangePublicKey: string;
+  keyExchangePrivateKeyJwk: JsonWebKey;
 };
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -23,7 +25,7 @@ function base64ToBytes(base64: string): Uint8Array {
 }
 
 async function generateIdentity(): Promise<StoredIdentity> {
-  const pair = await crypto.subtle.generateKey(
+  const rsaPair = await crypto.subtle.generateKey(
     {
       name: 'RSA-OAEP',
       modulusLength: 2048,
@@ -34,12 +36,44 @@ async function generateIdentity(): Promise<StoredIdentity> {
     ['encrypt', 'decrypt'],
   );
 
-  const publicKeyBuffer = await crypto.subtle.exportKey('spki', pair.publicKey);
-  const privateKeyJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const dhPair = await crypto.subtle.generateKey(
+    {
+      name: 'ECDH',
+      namedCurve: 'P-256',
+    },
+    true,
+    ['deriveBits'],
+  );
+
+  const publicKeyBuffer = await crypto.subtle.exportKey('spki', rsaPair.publicKey);
+  const privateKeyJwk = await crypto.subtle.exportKey('jwk', rsaPair.privateKey);
+  const keyExchangePublicKeyBuffer = await crypto.subtle.exportKey('raw', dhPair.publicKey);
+  const keyExchangePrivateKeyJwk = await crypto.subtle.exportKey('jwk', dhPair.privateKey);
 
   return {
     publicKey: bytesToBase64(new Uint8Array(publicKeyBuffer)),
     privateKeyJwk,
+    keyExchangePublicKey: bytesToBase64(new Uint8Array(keyExchangePublicKeyBuffer)),
+    keyExchangePrivateKeyJwk,
+  };
+}
+
+async function generateKeyExchangeIdentity(): Promise<Pick<StoredIdentity, 'keyExchangePublicKey' | 'keyExchangePrivateKeyJwk'>> {
+  const dhPair = await crypto.subtle.generateKey(
+    {
+      name: 'ECDH',
+      namedCurve: 'P-256',
+    },
+    true,
+    ['deriveBits'],
+  );
+
+  const keyExchangePublicKeyBuffer = await crypto.subtle.exportKey('raw', dhPair.publicKey);
+  const keyExchangePrivateKeyJwk = await crypto.subtle.exportKey('jwk', dhPair.privateKey);
+
+  return {
+    keyExchangePublicKey: bytesToBase64(new Uint8Array(keyExchangePublicKeyBuffer)),
+    keyExchangePrivateKeyJwk,
   };
 }
 
@@ -47,9 +81,26 @@ export async function getOrCreateIdentity(): Promise<StoredIdentity> {
   const storedRaw = localStorage.getItem(IDENTITY_STORAGE_KEY);
   if (storedRaw) {
     try {
-      const parsed = JSON.parse(storedRaw) as StoredIdentity;
-      if (parsed.publicKey && parsed.privateKeyJwk) {
+      const parsed = JSON.parse(storedRaw) as Partial<StoredIdentity>;
+      if (
+        parsed.publicKey
+        && parsed.privateKeyJwk
+        && parsed.keyExchangePublicKey
+        && parsed.keyExchangePrivateKeyJwk
+      ) {
         return parsed;
+      }
+
+      if (parsed.publicKey && parsed.privateKeyJwk) {
+        const keyExchangeIdentity = await generateKeyExchangeIdentity();
+        const migrated = {
+          publicKey: parsed.publicKey,
+          privateKeyJwk: parsed.privateKeyJwk,
+          ...keyExchangeIdentity,
+        } satisfies StoredIdentity;
+
+        localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(migrated));
+        return migrated;
       }
     } catch (_error) {
       localStorage.removeItem(IDENTITY_STORAGE_KEY);
@@ -87,6 +138,47 @@ async function importPrivateKey(privateKeyJwk: JsonWebKey): Promise<CryptoKey> {
   );
 }
 
+async function importKeyExchangePublicKey(base64Key: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    base64ToBytes(base64Key),
+    {
+      name: 'ECDH',
+      namedCurve: 'P-256',
+    },
+    false,
+    [],
+  );
+}
+
+async function importKeyExchangePrivateKey(privateKeyJwk: JsonWebKey): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'jwk',
+    privateKeyJwk,
+    {
+      name: 'ECDH',
+      namedCurve: 'P-256',
+    },
+    false,
+    ['deriveBits'],
+  );
+}
+
+async function deriveSharedAesKey(identity: StoredIdentity, peerKeyExchangePublicKey: string): Promise<CryptoKey> {
+  const privateKey = await importKeyExchangePrivateKey(identity.keyExchangePrivateKeyJwk);
+  const peerPublicKey = await importKeyExchangePublicKey(peerKeyExchangePublicKey);
+  const rawBits = await crypto.subtle.deriveBits(
+    {
+      name: 'ECDH',
+      public: peerPublicKey,
+    },
+    privateKey,
+    256,
+  );
+
+  return crypto.subtle.importKey('raw', rawBits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
 async function importThreadKey(rawKeyBase64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', base64ToBytes(rawKeyBase64), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
@@ -97,14 +189,65 @@ export async function generateThreadKeyRaw(): Promise<string> {
   return bytesToBase64(new Uint8Array(raw));
 }
 
-export async function encryptThreadKeyForUser(rawThreadKey: string, recipientPublicKey: string): Promise<string> {
+export async function encryptThreadKeyForUser(
+  rawThreadKey: string,
+  recipientPublicKey: string,
+  recipientKeyExchangePublicKey: string | null,
+  identity: StoredIdentity,
+): Promise<string> {
+  if (recipientKeyExchangePublicKey) {
+    const sharedKey = await deriveSharedAesKey(identity, recipientKeyExchangePublicKey);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      sharedKey,
+      base64ToBytes(rawThreadKey),
+    );
+
+    const encryptedBytes = new Uint8Array(encrypted);
+    const authTag = encryptedBytes.slice(encryptedBytes.length - 16);
+    const ciphertext = encryptedBytes.slice(0, encryptedBytes.length - 16);
+
+    return JSON.stringify({
+      scheme: 'ecdh-p256-aes-gcm',
+      senderKeyExchangePublicKey: identity.keyExchangePublicKey,
+      iv: bytesToBase64(iv),
+      ciphertext: bytesToBase64(ciphertext),
+      authTag: bytesToBase64(authTag),
+    });
+  }
+
   const publicKey = await importPublicKey(recipientPublicKey);
   const encrypted = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, base64ToBytes(rawThreadKey));
   return bytesToBase64(new Uint8Array(encrypted));
 }
 
-export async function decryptThreadKeyForUser(encryptedThreadKey: string, privateKeyJwk: JsonWebKey): Promise<string> {
-  const privateKey = await importPrivateKey(privateKeyJwk);
+export async function decryptThreadKeyForUser(encryptedThreadKey: string, identity: StoredIdentity): Promise<string> {
+  if (encryptedThreadKey.startsWith('{')) {
+    try {
+      const payload = JSON.parse(encryptedThreadKey);
+      if (payload?.scheme === 'ecdh-p256-aes-gcm' && payload?.senderKeyExchangePublicKey) {
+        const sharedKey = await deriveSharedAesKey(identity, String(payload.senderKeyExchangePublicKey));
+        const ciphertext = base64ToBytes(String(payload.ciphertext || ''));
+        const authTag = base64ToBytes(String(payload.authTag || ''));
+        const combined = new Uint8Array(ciphertext.length + authTag.length);
+        combined.set(ciphertext, 0);
+        combined.set(authTag, ciphertext.length);
+
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: base64ToBytes(String(payload.iv || '')), tagLength: 128 },
+          sharedKey,
+          combined,
+        );
+
+        return bytesToBase64(new Uint8Array(decrypted));
+      }
+    } catch (_error) {
+      // Fall back to legacy RSA decryption for backward compatibility.
+    }
+  }
+
+  const privateKey = await importPrivateKey(identity.privateKeyJwk);
   const raw = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, base64ToBytes(encryptedThreadKey));
   return bytesToBase64(new Uint8Array(raw));
 }

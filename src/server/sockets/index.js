@@ -82,6 +82,7 @@ function registerSocketHandlers(io) {
           text: payload?.encryptedPayload,
           replyToMessageId: payload?.replyToMessageId || null,
           clientMessageId: payload?.clientMessageId || null,
+          deleteAfterReadSeconds: payload?.deleteAfterReadSeconds ?? null,
           logContext: {
             ipAddress: socket.handshake.address || null,
             userAgent: socket.handshake.headers?.['user-agent'] || null,

@@ -16,6 +16,8 @@ type ThreadParticipant = {
   id: string;
   username: string;
   email: string;
+  publicKey?: string | null;
+  keyExchangePublicKey?: string | null;
 };
 
 type RawChatMessage = {
@@ -32,6 +34,9 @@ type RawChatMessage = {
   };
   isOwn: boolean;
   createdAt: string;
+  readAt?: string | null;
+  expiresAt?: string | null;
+  deleteAfterReadSeconds?: number | null;
   replyTo?: {
     id: string;
     senderName: string;
@@ -47,6 +52,9 @@ type ChatMessage = {
   text: string;
   isOwn: boolean;
   createdAt: string;
+  readAt?: string | null;
+  expiresAt?: string | null;
+  deleteAfterReadSeconds?: number | null;
   replyTo?: {
     id: string;
     senderName: string;
@@ -57,6 +65,7 @@ type ChatMessage = {
 type ChatThread = {
   id: string;
   threadType: string;
+  name?: string | null;
   participants: ThreadParticipant[];
   lastActivityAt: string;
   messageCount: number;
@@ -72,6 +81,16 @@ type SearchedUser = {
   username: string;
   email: string;
   publicKey?: string | null;
+  keyExchangePublicKey?: string | null;
+};
+
+type RawChatUser = {
+  id?: string;
+  _id?: string;
+  username: string;
+  email: string;
+  publicKey?: string | null;
+  keyExchangePublicKey?: string | null;
 };
 
 type IncomingRequest = {
@@ -81,6 +100,7 @@ type IncomingRequest = {
     username: string;
     email: string;
     publicKey?: string | null;
+    keyExchangePublicKey?: string | null;
   };
   status: string;
   initialMessage: {
@@ -160,8 +180,14 @@ function ChatPage() {
   const socketRef = useRef<Socket | null>(null);
   const activeThreadIdRef = useRef('');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const expiryTimersRef = useRef<Map<string, number>>(new Map());
   const threadKeysRef = useRef<Map<string, string>>(new Map());
-  const identityRef = useRef<{ publicKey: string; privateKeyJwk: JsonWebKey } | null>(null);
+  const identityRef = useRef<{
+    publicKey: string;
+    privateKeyJwk: JsonWebKey;
+    keyExchangePublicKey: string;
+    keyExchangePrivateKeyJwk: JsonWebKey;
+  } | null>(null);
 
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState('');
@@ -170,9 +196,13 @@ function ChatPage() {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [requestEmail, setRequestEmail] = useState('');
   const [firstMessageInput, setFirstMessageInput] = useState('');
+  const [groupName, setGroupName] = useState('');
+  const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<SearchedUser[]>([]);
   const [searchedUser, setSearchedUser] = useState<SearchedUser | null>(null);
   const [incomingRequests, setIncomingRequests] = useState<Array<IncomingRequest & { preview: string }>>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<OutgoingRequest[]>([]);
+  const [deleteAfterReadSeconds, setDeleteAfterReadSeconds] = useState<number | ''>('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [requesting, setRequesting] = useState(false);
@@ -195,9 +225,46 @@ function ChatPage() {
     const encryptedKey = String(response.data?.encryptedKey || '');
     if (!encryptedKey) throw new Error('No encrypted key available for this thread');
 
-    const threadKey = await decryptThreadKeyForUser(encryptedKey, identity.privateKeyJwk);
+    const threadKey = await decryptThreadKeyForUser(encryptedKey, identity);
     threadKeysRef.current.set(threadId, threadKey);
     return threadKey;
+  }
+
+  function scheduleMessageExpiry(messageId: string, expiresAt: string | null | undefined) {
+    if (!expiresAt) return;
+
+    const existing = expiryTimersRef.current.get(messageId);
+    if (existing) {
+      window.clearTimeout(existing);
+    }
+
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (ms <= 0) {
+      setMessages((prev) => prev.filter((message) => message.id !== messageId));
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setMessages((prev) => prev.filter((message) => message.id !== messageId));
+      expiryTimersRef.current.delete(messageId);
+    }, ms);
+
+    expiryTimersRef.current.set(messageId, timer);
+  }
+
+  async function markAsRead(threadId: string, messageId: string) {
+    try {
+      const response = await api.post(`/api/chat/threads/${threadId}/messages/${messageId}/read`);
+      const expiresAt = response.data?.expiresAt || null;
+      if (expiresAt) {
+        scheduleMessageExpiry(messageId, expiresAt);
+        setMessages((prev) => prev.map((message) => (
+          message.id === messageId ? { ...message, readAt: response.data?.readAt || message.readAt, expiresAt } : message
+        )));
+      }
+    } catch (_error) {
+      // Non-fatal: read receipts should not interrupt chat rendering.
+    }
   }
 
   async function decryptRawMessage(rawMessage: RawChatMessage, threadKey: string, byId: Map<string, ChatMessage>) {
@@ -212,6 +279,9 @@ function ChatPage() {
       text,
       isOwn: rawMessage.isOwn,
       createdAt: rawMessage.createdAt,
+      readAt: rawMessage.readAt || null,
+      expiresAt: rawMessage.expiresAt || null,
+      deleteAfterReadSeconds: rawMessage.deleteAfterReadSeconds || null,
       replyTo: rawMessage.replyTo
         ? {
             id: rawMessage.replyTo.id,
@@ -238,6 +308,21 @@ function ChatPage() {
     }
   }
 
+  async function refreshUsers() {
+    const response = await api.get('/api/chat/users');
+    const normalizedUsers = ((response.data.users || []) as RawChatUser[])
+      .map((user) => ({
+        id: String(user.id || user._id || ''),
+        username: user.username,
+        email: user.email,
+        publicKey: user.publicKey || null,
+        keyExchangePublicKey: user.keyExchangePublicKey || null,
+      }))
+      .filter((user) => user.id);
+
+    setAvailableUsers(normalizedUsers);
+  }
+
   async function refreshRequests() {
     const identity = identityRef.current;
     if (!identity) return;
@@ -253,7 +338,7 @@ function ChatPage() {
         try {
           const encryptedKeyForMe = request.participantKeys.find((item) => String(item.userId) === String(currentUser.id));
           if (!encryptedKeyForMe) return { ...request, preview: '[Unable to decrypt request]' };
-          const threadKey = await decryptThreadKeyForUser(encryptedKeyForMe.encryptedKey, identity.privateKeyJwk);
+          const threadKey = await decryptThreadKeyForUser(encryptedKeyForMe.encryptedKey, identity);
           const preview = await decryptMessageText(request.initialMessage, threadKey);
           return { ...request, preview };
         } catch (_error) {
@@ -324,10 +409,19 @@ function ChatPage() {
             if (prev.some((message) => message.id === decrypted.id)) return prev;
             return sortMessages([...prev, decrypted]);
           });
+
+          if (!decrypted.isOwn) {
+            await markAsRead(payload.threadId, decrypted.id);
+          }
         }
       } catch (_error) {
         setStatus({ type: 'error', message: 'Failed to decrypt incoming message.' });
       }
+    });
+
+    socket.on('chat:message:deleted', (payload: { messageId: string }) => {
+      if (!payload?.messageId) return;
+      setMessages((prev) => prev.filter((message) => message.id !== payload.messageId));
     });
 
     return () => {
@@ -342,10 +436,13 @@ function ChatPage() {
       try {
         const identity = await getOrCreateIdentity();
         identityRef.current = identity;
-        await api.put('/api/chat/keys/public', { publicKey: identity.publicKey });
+        await api.put('/api/chat/keys/public', {
+          publicKey: identity.publicKey,
+          keyExchangePublicKey: identity.keyExchangePublicKey,
+        });
 
         const urlThread = searchParams.get('thread') || '';
-        await Promise.all([refreshThreads(urlThread), refreshRequests()]);
+        await Promise.all([refreshThreads(urlThread), refreshRequests(), refreshUsers()]);
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
         setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load chat.' });
@@ -356,6 +453,13 @@ function ChatPage() {
 
     bootstrap();
   }, [api]);
+
+  useEffect(() => {
+    return () => {
+      expiryTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      expiryTimersRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -377,6 +481,18 @@ function ChatPage() {
         }
 
         setMessages((prev) => mergeLoadedMessages(prev, nextMessages));
+
+        nextMessages.forEach((message) => {
+          if (message.expiresAt) {
+            scheduleMessageExpiry(message.id, message.expiresAt);
+          }
+        });
+
+        await Promise.all(
+          nextMessages
+            .filter((message) => !message.isOwn && !message.readAt)
+            .map((message) => markAsRead(activeThreadId, message.id)),
+        );
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
         setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load messages.' });
@@ -425,8 +541,18 @@ function ChatPage() {
 
       const threadKey = await generateThreadKeyRaw();
       const encryptedPayload = await encryptMessageText(firstMessageInput.trim(), threadKey);
-      const myEncryptedKey = await encryptThreadKeyForUser(threadKey, identity.publicKey);
-      const recipientEncryptedKey = await encryptThreadKeyForUser(threadKey, searchedUser.publicKey);
+      const myEncryptedKey = await encryptThreadKeyForUser(
+        threadKey,
+        identity.publicKey,
+        identity.keyExchangePublicKey,
+        identity,
+      );
+      const recipientEncryptedKey = await encryptThreadKeyForUser(
+        threadKey,
+        searchedUser.publicKey,
+        searchedUser.keyExchangePublicKey || null,
+        identity,
+      );
 
       await api.post('/api/chat/requests', {
         recipientEmail: searchedUser.email,
@@ -447,6 +573,70 @@ function ChatPage() {
       setStatus({ type: 'error', message: axiosError.response?.data?.message || (error as Error).message || 'Unable to send request.' });
     } finally {
       setRequesting(false);
+    }
+  }
+
+  async function createGroupChat() {
+    if (groupParticipantIds.length < 2) {
+      setStatus({ type: 'warn', message: 'Select at least two users to create a group chat.' });
+      return;
+    }
+
+    try {
+      const identity = identityRef.current;
+      if (!identity) throw new Error('Encryption identity is not ready');
+
+      const threadKey = await generateThreadKeyRaw();
+      const participants = [
+        {
+          id: currentUser.id,
+          publicKey: identity.publicKey,
+          keyExchangePublicKey: identity.keyExchangePublicKey,
+        },
+        ...availableUsers
+          .filter((user) => groupParticipantIds.includes(String(user.id)))
+          .map((user) => ({
+            id: String(user.id),
+            publicKey: String(user.publicKey || ''),
+            keyExchangePublicKey: user.keyExchangePublicKey || null,
+          })),
+      ];
+
+      if (participants.some((item) => !item.publicKey)) {
+        throw new Error('One or more selected users have not activated secure chat yet.');
+      }
+
+      const participantKeys = await Promise.all(
+        participants.map(async (participant) => ({
+          userId: participant.id,
+          encryptedKey: await encryptThreadKeyForUser(
+            threadKey,
+            participant.publicKey,
+            participant.keyExchangePublicKey,
+            identity,
+          ),
+        })),
+      );
+
+      const response = await api.post('/api/chat/threads/group', {
+        name: groupName,
+        participantIds: groupParticipantIds,
+        participantKeys,
+      });
+
+      const threadId = String(response.data?.thread?.id || '');
+      await refreshThreads(threadId || undefined);
+      if (threadId) {
+        setActiveThreadId(threadId);
+        socketRef.current?.emit('room:join', threadId);
+      }
+
+      setGroupName('');
+      setGroupParticipantIds([]);
+      setStatus({ type: 'success', message: 'Encrypted group chat created.' });
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || (error as Error).message || 'Unable to create group chat.' });
     }
   }
 
@@ -492,6 +682,7 @@ function ChatPage() {
       text: draftText,
       isOwn: true,
       createdAt: draftCreatedAt,
+      deleteAfterReadSeconds: deleteAfterReadSeconds === '' ? null : Number(deleteAfterReadSeconds),
       replyTo: replyTo
         ? {
             id: replyTo.id,
@@ -513,6 +704,7 @@ function ChatPage() {
           encryptedPayload,
           replyToMessageId: replyTo?.id || null,
           clientMessageId,
+          deleteAfterReadSeconds: deleteAfterReadSeconds === '' ? null : Number(deleteAfterReadSeconds),
         });
 
         const rawCreated = response.data?.message as RawChatMessage;
@@ -526,7 +718,13 @@ function ChatPage() {
         await new Promise<void>((resolve) => {
           socket.emit(
             'chat:message:send',
-            { threadId: activeThreadId, encryptedPayload, replyToMessageId: replyTo?.id || null, clientMessageId },
+            {
+              threadId: activeThreadId,
+              encryptedPayload,
+              replyToMessageId: replyTo?.id || null,
+              clientMessageId,
+              deleteAfterReadSeconds: deleteAfterReadSeconds === '' ? null : Number(deleteAfterReadSeconds),
+            },
             async (ack: SocketAck) => {
               if (!ack?.ok || !ack.message) {
                 setStatus({ type: 'error', message: 'Unable to send message.' });
@@ -621,6 +819,43 @@ function ChatPage() {
           ))}
         </div>
 
+        <h3>Create Group</h3>
+        <div className="chat-user-list">
+          <input
+            value={groupName}
+            onChange={(event) => setGroupName(event.target.value)}
+            placeholder="Group name (optional)"
+            maxLength={120}
+          />
+          <div className="thread-list">
+            {availableUsers.map((user) => {
+              const checked = groupParticipantIds.includes(String(user.id));
+              const disabled = !user.publicKey;
+              return (
+                <label key={user.id} className="thread-item" style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      const next = event.target.checked
+                        ? [...groupParticipantIds, String(user.id)]
+                        : groupParticipantIds.filter((id) => id !== String(user.id));
+                      setGroupParticipantIds(next);
+                    }}
+                  />
+                  <strong>{user.username}</strong>
+                  <span>{user.email}</span>
+                  {disabled && <span className="status warn">Secure chat key not published yet</span>}
+                </label>
+              );
+            })}
+          </div>
+          <button type="button" className="submit" onClick={createGroupChat}>
+            Create encrypted group
+          </button>
+        </div>
+
         <h3>Active Threads</h3>
         <div className="thread-list">
           {threads.map((thread) => {
@@ -632,7 +867,7 @@ function ChatPage() {
                 className={thread.id === activeThreadId ? 'thread-item active' : 'thread-item'}
                 onClick={() => setActiveThreadId(thread.id)}
               >
-                <strong>{peer?.username || 'Group thread'}</strong>
+                <strong>{thread.threadType === 'group' ? (thread.name || 'Group thread') : (peer?.username || 'Direct thread')}</strong>
                 <span>{thread.lastMessage?.text || 'No messages yet'}</span>
               </button>
             );
@@ -649,10 +884,12 @@ function ChatPage() {
               <div>
                 <p className="brand-kicker">True end-to-end encrypted chat</p>
                 <h3>
-                  {activeThread.participants
-                    .filter((participant) => participant.id !== currentUser?.id)
-                    .map((participant) => participant.username)
-                    .join(', ') || 'Chat'}
+                  {activeThread.threadType === 'group'
+                    ? (activeThread.name || 'Encrypted Group')
+                    : (activeThread.participants
+                      .filter((participant) => participant.id !== currentUser?.id)
+                      .map((participant) => participant.username)
+                      .join(', ') || 'Chat')}
                 </h3>
               </div>
             </header>
@@ -688,6 +925,20 @@ function ChatPage() {
             )}
 
             <form className="chat-compose" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+              <select
+                value={deleteAfterReadSeconds}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDeleteAfterReadSeconds(value ? Number(value) : '');
+                }}
+                aria-label="Ephemeral mode"
+              >
+                <option value="">Keep message</option>
+                <option value="10">Delete 10s after read</option>
+                <option value="30">Delete 30s after read</option>
+                <option value="60">Delete 60s after read</option>
+                <option value="300">Delete 5m after read</option>
+              </select>
               <input
                 value={messageInput}
                 onChange={(event) => setMessageInput(event.target.value)}

@@ -50,7 +50,10 @@ function App() {
         const identity = await getOrCreateIdentity()
         if (cancelled) return
         const api = createApiClient()
-        await api.put('/api/chat/keys/public', { publicKey: identity.publicKey })
+        await api.put('/api/chat/keys/public', {
+          publicKey: identity.publicKey,
+          keyExchangePublicKey: identity.keyExchangePublicKey,
+        })
       } catch {
         // Non-fatal: chat page will retry on its own bootstrap.
       }
