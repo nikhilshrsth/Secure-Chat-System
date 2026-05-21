@@ -182,7 +182,7 @@ router.post('/verify-email', async (req, res, next) => {
       res.status(400);
       return next(new Error('Email already verified'));
     }
-    const valid = emailOtpService.verifyOtp(normalizedEmail, otp);
+    const valid = emailOtpService.verifyOtp(normalizedEmail, otp, 'registration');
     if (!valid) {
       res.status(400);
       return next(new Error('Invalid or expired OTP'));
@@ -190,6 +190,106 @@ router.post('/verify-email', async (req, res, next) => {
     user.isActive = true;
     await user.save();
     res.status(200).json({ message: 'Email verified. You can now log in.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/forgot-password/request', async (req, res, next) => {
+  const logContext = req.logContext || {};
+
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400);
+      return next(new Error('email is required'));
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (user && user.isActive) {
+      const otp = emailOtpService.generateOtp();
+      emailOtpService.storeOtp(normalizedEmail, otp, 'password-reset');
+      try {
+        await emailOtpService.sendOtpEmail(normalizedEmail, otp, 'password-reset');
+      } catch (emailError) {
+        console.error('[emailOtpService] Failed to send reset OTP email:', emailError.message);
+      }
+
+      await Logger.log({
+        eventType: 'passwordResetOtpRequested',
+        userId: user._id,
+        ipAddress: logContext.ipAddress,
+        userAgent: logContext.userAgent,
+        success: true,
+        details: 'Password reset OTP requested',
+        severity: 'INFO',
+      });
+    }
+
+    // Always return success-style response to avoid account enumeration.
+    res.status(200).json({
+      message: 'If the account exists, a password reset code has been sent to email.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/forgot-password/confirm', async (req, res, next) => {
+  const logContext = req.logContext || {};
+
+  try {
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+      res.status(400);
+      return next(new Error('email, otp and newPassword are required'));
+    }
+
+    if (String(newPassword).length < 8) {
+      res.status(400);
+      return next(new Error('password must be at least 8 characters'));
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail }).select('+passwordHash');
+    if (!user) {
+      res.status(404);
+      return next(new Error('User not found'));
+    }
+
+    const valid = emailOtpService.verifyOtp(normalizedEmail, otp, 'password-reset');
+    if (!valid) {
+      res.status(400);
+      await Logger.log({
+        eventType: 'passwordResetFailed',
+        userId: user._id,
+        ipAddress: logContext.ipAddress,
+        userAgent: logContext.userAgent,
+        success: false,
+        details: 'Password reset failed due to invalid/expired OTP',
+        severity: 'WARN',
+      });
+      return next(new Error('Invalid or expired OTP'));
+    }
+
+    user.passwordHash = String(newPassword);
+    user.failedLoginCount = 0;
+    await user.save();
+
+    await Logger.log({
+      eventType: 'passwordResetSuccess',
+      userId: user._id,
+      ipAddress: logContext.ipAddress,
+      userAgent: logContext.userAgent,
+      success: true,
+      details: 'Password reset completed with email OTP',
+      severity: 'INFO',
+    });
+
+    res.status(200).json({ message: 'Password reset successful. Please sign in.' });
   } catch (error) {
     next(error);
   }
@@ -605,6 +705,62 @@ router.get('/me', protect, async (req, res) => {
   res.status(200).json({
     user: mapUserResponse(req.user),
   });
+});
+
+router.post('/change-password', protect, async (req, res, next) => {
+  const logContext = req.logContext || {};
+
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      res.status(400);
+      return next(new Error('currentPassword and newPassword are required'));
+    }
+
+    if (String(newPassword).length < 8) {
+      res.status(400);
+      return next(new Error('New password must be at least 8 characters'));
+    }
+
+    const user = await User.findById(req.user._id).select('+passwordHash');
+    if (!user) {
+      res.status(404);
+      return next(new Error('User not found'));
+    }
+
+    const validCurrentPassword = await user.comparePassword(String(currentPassword));
+    if (!validCurrentPassword) {
+      res.status(401);
+      await Logger.log({
+        eventType: 'passwordChangeFailed',
+        userId: req.user._id,
+        ipAddress: logContext.ipAddress,
+        userAgent: logContext.userAgent,
+        success: false,
+        details: 'Password change failed due to invalid current password',
+        severity: 'WARN',
+      });
+      return next(new Error('Current password is incorrect'));
+    }
+
+    user.passwordHash = String(newPassword);
+    await user.save();
+
+    await Logger.log({
+      eventType: 'passwordChangeSuccess',
+      userId: req.user._id,
+      ipAddress: logContext.ipAddress,
+      userAgent: logContext.userAgent,
+      success: true,
+      details: 'Password changed from profile security settings',
+      severity: 'INFO',
+    });
+
+    res.status(200).json({ message: 'Password updated successfully' });
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = router;

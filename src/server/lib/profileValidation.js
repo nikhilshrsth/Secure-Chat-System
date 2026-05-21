@@ -28,6 +28,13 @@ const profileSchema = z.object({
     .optional()
     .refine((value) => !value || supportedLanguages.includes(value.toLowerCase()), 'Preferred language must be supported'),
   themePreference: z.enum(['light', 'dark']).optional(),
+  phoneNumber: z
+    .string()
+    .optional()
+    .refine(
+      (v) => !v || /^\+?[\d\s\-().]{7,20}$/.test(v),
+      'Phone number must be 7–20 digits, may include +, spaces, hyphens, or parentheses',
+    ),
 });
 
 function validateProfilePayload(payload) {

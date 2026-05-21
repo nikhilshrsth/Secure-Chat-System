@@ -16,6 +16,11 @@ const userProfileSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    profilePicturePublicId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     alternativeEmail: {
       type: String,
       default: null,
@@ -38,6 +43,11 @@ const userProfileSchema = new mongoose.Schema(
       type: String,
       enum: ['light', 'dark'],
       default: 'light',
+    },
+    phoneNumber: {
+      type: String,
+      default: null,
+      trim: true,
     },
   },
   {

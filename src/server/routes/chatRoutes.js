@@ -210,13 +210,14 @@ router.get('/threads/:threadId/messages', async (req, res, next) => {
 
 router.post('/threads/:threadId/messages', async (req, res, next) => {
   try {
-    const { encryptedPayload, replyToMessageId } = req.body;
+    const { encryptedPayload, replyToMessageId, clientMessageId } = req.body;
 
     const result = await sendMessage({
       threadId: req.params.threadId,
       senderId: req.user._id,
       text: encryptedPayload,
       replyToMessageId,
+      clientMessageId,
       logContext: getLogContext(req),
     });
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
 import { type AxiosError } from 'axios';
 import { createApiClient } from '../lib/api';
@@ -22,6 +23,7 @@ type RawChatMessage = {
   threadId: string;
   senderId: string;
   senderName: string;
+  clientMessageId?: string | null;
   encryptedPayload: {
     ciphertext: string;
     iv: string;
@@ -41,6 +43,7 @@ type ChatMessage = {
   threadId: string;
   senderId: string;
   senderName: string;
+  clientMessageId?: string | null;
   text: string;
   isOwn: boolean;
   createdAt: string;
@@ -108,10 +111,47 @@ function formatTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function sortMessages(messages: ChatMessage[]) {
+  return [...messages].sort((a, b) => {
+    const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function mergeLoadedMessages(previous: ChatMessage[], loaded: ChatMessage[]) {
+  const byId = new Map<string, ChatMessage>();
+
+  previous.forEach((message) => {
+    byId.set(message.id, message);
+  });
+
+  loaded.forEach((message) => {
+    byId.set(message.id, message);
+  });
+
+  return sortMessages(Array.from(byId.values()));
+}
+
+function reconcileSentMessage(previous: ChatMessage[], clientMessageId: string, created: ChatMessage) {
+  const next = previous.filter(
+    (message) => message.id !== created.id && message.clientMessageId !== clientMessageId,
+  );
+
+  return sortMessages([
+    ...next,
+    {
+      ...created,
+      clientMessageId,
+    },
+  ]);
+}
+
 function ChatPage() {
   const api = useMemo(() => createApiClient(), []);
   const socketUrl = import.meta.env.VITE_SOCKET_URL || '';
   const token = localStorage.getItem('secureChatToken') || '';
+  const [searchParams] = useSearchParams();
   const currentUser = useMemo(() => {
     const raw = localStorage.getItem('secureChatUser');
     return raw ? JSON.parse(raw) : null;
@@ -185,11 +225,17 @@ function ChatPage() {
     return mapped;
   }
 
-  async function refreshThreads() {
+  async function refreshThreads(overrideThreadId?: string) {
     const response = await api.get('/api/chat/threads');
     const nextThreads = response.data.threads || [];
     setThreads(nextThreads);
-    if (!activeThreadId && nextThreads[0]?.id) setActiveThreadId(nextThreads[0].id);
+    // Prefer explicit override (from URL param) then first thread if nothing active.
+    const target = overrideThreadId || searchParams.get('thread') || '';
+    if (target && nextThreads.some((t: ChatThread) => t.id === target)) {
+      setActiveThreadId(target);
+    } else if (!activeThreadId && !target && nextThreads[0]?.id) {
+      setActiveThreadId(nextThreads[0].id);
+    }
   }
 
   async function refreshRequests() {
@@ -249,6 +295,8 @@ function ChatPage() {
         const messageMap = new Map<string, ChatMessage>();
         const decrypted = await decryptRawMessage(payload.message, threadKey, messageMap);
 
+        const clientMessageId = payload.message.clientMessageId || null;
+
         setThreads((prev) =>
           prev.map((thread) =>
             thread.id === payload.threadId
@@ -268,8 +316,13 @@ function ChatPage() {
 
         if (payload.threadId === activeThreadIdRef.current) {
           setMessages((prev) => {
+            if (clientMessageId) {
+              const reconciled = reconcileSentMessage(prev, clientMessageId, decrypted);
+              return reconciled;
+            }
+
             if (prev.some((message) => message.id === decrypted.id)) return prev;
-            return [...prev, decrypted];
+            return sortMessages([...prev, decrypted]);
           });
         }
       } catch (_error) {
@@ -291,7 +344,8 @@ function ChatPage() {
         identityRef.current = identity;
         await api.put('/api/chat/keys/public', { publicKey: identity.publicKey });
 
-        await Promise.all([refreshThreads(), refreshRequests()]);
+        const urlThread = searchParams.get('thread') || '';
+        await Promise.all([refreshThreads(urlThread), refreshRequests()]);
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
         setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load chat.' });
@@ -322,7 +376,7 @@ function ChatPage() {
           nextMessages.push(decrypted);
         }
 
-        setMessages(nextMessages);
+        setMessages((prev) => mergeLoadedMessages(prev, nextMessages));
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
         setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load messages.' });
@@ -426,39 +480,64 @@ function ChatPage() {
     setSending(true);
     setStatus({ type: '', message: '' });
 
+    const clientMessageId = crypto.randomUUID();
+    const draftText = messageInput.trim();
+    const draftCreatedAt = new Date().toISOString();
+    const optimisticMessage: ChatMessage = {
+      id: clientMessageId,
+      clientMessageId,
+      threadId: activeThreadId,
+      senderId: currentUser?.id || '',
+      senderName: currentUser?.username || 'You',
+      text: draftText,
+      isOwn: true,
+      createdAt: draftCreatedAt,
+      replyTo: replyTo
+        ? {
+            id: replyTo.id,
+            senderName: replyTo.senderName,
+            text: replyTo.text,
+          }
+        : null,
+    };
+
+    setMessages((prev) => sortMessages([...prev, optimisticMessage]));
+
     try {
       const threadKey = await ensureThreadKey(activeThreadId);
-      const encryptedPayload = await encryptMessageText(messageInput.trim(), threadKey);
+      const encryptedPayload = await encryptMessageText(draftText, threadKey);
       const socket = socketRef.current;
 
       if (!socket || !socket.connected) {
         const response = await api.post(`/api/chat/threads/${activeThreadId}/messages`, {
           encryptedPayload,
           replyToMessageId: replyTo?.id || null,
+          clientMessageId,
         });
 
         const rawCreated = response.data?.message as RawChatMessage;
         if (rawCreated) {
           const map = new Map(messages.map((message) => [message.id, message]));
           const created = await decryptRawMessage(rawCreated, threadKey, map);
-          setMessages((prev) => [...prev, created]);
+          setMessages((prev) => reconcileSentMessage(prev, clientMessageId, created));
           await refreshThreads();
         }
       } else {
         await new Promise<void>((resolve) => {
           socket.emit(
             'chat:message:send',
-            { threadId: activeThreadId, encryptedPayload, replyToMessageId: replyTo?.id || null },
+            { threadId: activeThreadId, encryptedPayload, replyToMessageId: replyTo?.id || null, clientMessageId },
             async (ack: SocketAck) => {
               if (!ack?.ok || !ack.message) {
                 setStatus({ type: 'error', message: 'Unable to send message.' });
+                setMessages((prev) => prev.filter((message) => message.clientMessageId !== clientMessageId));
                 resolve();
                 return;
               }
 
               const map = new Map(messages.map((message) => [message.id, message]));
               const created = await decryptRawMessage(ack.message, threadKey, map);
-              setMessages((prev) => (prev.some((message) => message.id === created.id) ? prev : [...prev, created]));
+              setMessages((prev) => reconcileSentMessage(prev, clientMessageId, created));
               await refreshThreads();
               resolve();
             },
@@ -469,6 +548,7 @@ function ChatPage() {
       setMessageInput('');
       setReplyTo(null);
     } catch (error: unknown) {
+      setMessages((prev) => prev.filter((message) => message.clientMessageId !== clientMessageId));
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to send message.' });
     } finally {

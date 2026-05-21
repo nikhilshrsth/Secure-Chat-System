@@ -6,22 +6,19 @@ const fs = require('fs');
 const UserProfile = require('../models/UserProfile');
 const { protectAllowInactive } = require('../middleware/authMiddleware');
 const { profileSchema, supportedCountries, supportedLanguages } = require('../lib/profileValidation');
+const {
+  isCloudinaryConfigured,
+  uploadProfilePicture,
+  deleteProfilePicture,
+  extractPublicIdFromUrl,
+} = require('../services/cloudinaryService');
 
 const router = express.Router();
 
-const uploadDirectory = path.join(__dirname, '..', 'uploads', 'profile-pictures');
 const upload = multer({
-  storage: multer.diskStorage({
-    destination(req, file, cb) {
-      cb(null, uploadDirectory);
-    },
-    filename(req, file, cb) {
-      const extension = path.extname(file.originalname).toLowerCase();
-      cb(null, `${req.user._id.toString()}-${Date.now()}${extension}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: {
-    fileSize: 2 * 1024 * 1024,
+    fileSize: Number(process.env.MAX_FILE_SIZE) || (2 * 1024 * 1024),
   },
   fileFilter(req, file, cb) {
     const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -40,19 +37,59 @@ function mapProfile(profile) {
     id: profile._id,
     userId: profile.userId,
     dateOfBirth: profile.dateOfBirth?.toISOString().split('T')[0] || null,
-    profilePictureUrl: profile.profilePictureUrl,
+    profilePictureUrl: normalizeProfilePictureUrl(profile.profilePictureUrl),
     alternativeEmail: profile.alternativeEmail,
     country: profile.country,
     preferredLanguage: profile.preferredLanguage,
     themePreference: profile.themePreference,
+    phoneNumber: profile.phoneNumber,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
   };
 }
 
+function normalizeProfilePictureUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+
+  const value = rawUrl.trim();
+  if (!value) return null;
+
+  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+
+  const withoutQuery = value.split('?')[0];
+
+  if (withoutQuery.startsWith('/uploads/profile-pictures/')) return withoutQuery;
+  if (withoutQuery.startsWith('uploads/profile-pictures/')) return `/${withoutQuery}`;
+
+  // Backward compatibility for old values like /api/profile/picture[/filename]
+  if (withoutQuery.startsWith('/api/profile/picture')) {
+    const fileName = path.basename(withoutQuery);
+    if (fileName && fileName !== 'picture') {
+      return `/uploads/profile-pictures/${fileName}`;
+    }
+    return null;
+  }
+
+  return withoutQuery;
+}
+
 function removeExistingPicture(profile) {
   if (!profile?.profilePictureUrl) return;
-  const filePath = path.join(uploadDirectory, path.basename(profile.profilePictureUrl));
+
+  if (profile.profilePicturePublicId) {
+    return deleteProfilePicture(profile.profilePicturePublicId);
+  }
+
+  if (profile.profilePictureUrl.startsWith('http')) {
+    const fromUrl = extractPublicIdFromUrl(profile.profilePictureUrl);
+    if (fromUrl) {
+      return deleteProfilePicture(fromUrl);
+    }
+    return;
+  }
+
+  const localDirectory = path.join(__dirname, '..', 'uploads', 'profile-pictures');
+  const filePath = path.join(localDirectory, path.basename(profile.profilePictureUrl));
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
   }
@@ -105,6 +142,7 @@ router.post('/', protectAllowInactive, async (req, res, next) => {
       country: parsed.country ? parsed.country.toUpperCase() : null,
       preferredLanguage: parsed.preferredLanguage ? parsed.preferredLanguage.toLowerCase() : null,
       themePreference: parsed.themePreference || 'light',
+      phoneNumber: parsed.phoneNumber || null,
     });
 
     res.status(201).json({ profile: mapProfile(profile) });
@@ -133,6 +171,7 @@ router.put('/', protectAllowInactive, async (req, res, next) => {
     profile.country = parsed.country ? parsed.country.toUpperCase() : null;
     profile.preferredLanguage = parsed.preferredLanguage ? parsed.preferredLanguage.toLowerCase() : null;
     profile.themePreference = parsed.themePreference || 'light';
+    if (parsed.phoneNumber !== undefined) profile.phoneNumber = parsed.phoneNumber || null;
 
     await profile.save();
 
@@ -149,14 +188,21 @@ router.post('/picture', protectAllowInactive, upload.single('picture'), async (r
       return next(new Error('Profile picture is required'));
     }
 
+    if (!isCloudinaryConfigured()) {
+      res.status(500);
+      return next(new Error('Cloudinary is not configured on the server'));
+    }
+
     const profile = await UserProfile.findOne({ userId: req.user._id });
     if (!profile) {
       res.status(404);
       return next(new Error('Profile not found'));
     }
 
-    removeExistingPicture(profile);
-    profile.profilePictureUrl = `/uploads/profile-pictures/${req.file.filename}`;
+    await removeExistingPicture(profile);
+    const uploadResult = await uploadProfilePicture(req.file.buffer, req.user._id.toString(), req.file.mimetype);
+    profile.profilePictureUrl = uploadResult.secure_url;
+    profile.profilePicturePublicId = uploadResult.public_id;
     await profile.save();
 
     res.status(200).json({ profile: mapProfile(profile) });
@@ -173,8 +219,9 @@ router.delete('/picture', protectAllowInactive, async (req, res, next) => {
       return next(new Error('Profile not found'));
     }
 
-    removeExistingPicture(profile);
+    await removeExistingPicture(profile);
     profile.profilePictureUrl = null;
+    profile.profilePicturePublicId = null;
     await profile.save();
 
     res.status(200).json({ profile: mapProfile(profile) });

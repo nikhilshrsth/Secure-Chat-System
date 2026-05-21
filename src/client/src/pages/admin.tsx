@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { type AxiosError } from 'axios';
 import { createApiClient } from '../lib/api';
 
@@ -70,11 +70,19 @@ function AdminDashboardPage() {
     const raw = localStorage.getItem('secureChatUser');
     return raw ? JSON.parse(raw) : null;
   }, []);
+  const currentUser = storedUser;
   const [activeSection, setActiveSection] = useState('overview');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: '', message: '' });
   const [systemLogSearch, setSystemLogSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [alertStatusFilter, setAlertStatusFilter] = useState<'all' | 'open' | 'investigating' | 'resolved'>('all');
+  const [alertRiskFilter, setAlertRiskFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all');
+  const [loginRiskFilter, setLoginRiskFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  const [sectionRefreshing, setSectionRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
   const hasLoadedDashboard = useRef(false);
   const [data, setData] = useState<Record<string, any>>({
@@ -90,6 +98,11 @@ function AdminDashboardPage() {
     devsecops: null,
   });
 
+  const summary = data.overview?.summary || {};
+  const openAlertsCount = Number(summary.suspiciousActivityAlerts || 0);
+  const highRiskLoginCount = (data.loginAttempts || []).filter((attempt: any) => String(attempt.riskLevel || '').toLowerCase() === 'high').length;
+  const integrityFailureCount = Number(summary.messageIntegrityFailures || 0);
+
   async function loadDashboard() {
     setLoading(true);
     setStatus({ type: '', message: '' });
@@ -100,6 +113,7 @@ function AdminDashboardPage() {
         ...prev,
         overview: overview.data,
       }));
+      setLastUpdatedAt(new Date());
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load admin dashboard.' });
@@ -113,57 +127,67 @@ function AdminDashboardPage() {
       if (section === 'overview') {
         const response = await api.get('/api/admin/dashboard');
         setData((prev) => ({ ...prev, overview: response.data }));
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'users') {
         await refreshUsers('');
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'loginAttempts') {
         const response = await api.get('/api/admin/login-attempts');
         setData((prev) => ({ ...prev, loginAttempts: response.data.attempts || [] }));
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'alerts') {
         await refreshAlerts();
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'threads') {
         const response = await api.get('/api/admin/threads');
         setData((prev) => ({ ...prev, threads: response.data.threads || [] }));
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'integrity') {
         const response = await api.get('/api/admin/message-integrity');
         setData((prev) => ({ ...prev, integrity: response.data.logs || [] }));
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'ephemeral') {
         const response = await api.get('/api/admin/ephemeral-messages');
         setData((prev) => ({ ...prev, ephemeral: response.data.logs || [] }));
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'systemLogs') {
         await refreshSystemLogs('');
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'audit') {
         const response = await api.get('/api/admin/audit-trail');
         setData((prev) => ({ ...prev, audit: response.data.logs || [] }));
+        setLastUpdatedAt(new Date());
         return;
       }
 
       if (section === 'devsecops') {
         const response = await api.get('/api/admin/devsecops');
         setData((prev) => ({ ...prev, devsecops: response.data.scan || null }));
+        setLastUpdatedAt(new Date());
       }
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
@@ -185,6 +209,78 @@ function AdminDashboardPage() {
     const response = await api.get('/api/admin/system-logs', { params: { search } });
     setData((prev) => ({ ...prev, systemLogs: response.data.logs || [] }));
   }
+
+  async function refreshActiveSection() {
+    setSectionRefreshing(true);
+    setStatus({ type: '', message: '' });
+    try {
+      await loadSectionData(activeSection);
+      setStatus({ type: 'success', message: 'Section refreshed.' });
+    } finally {
+      setSectionRefreshing(false);
+    }
+  }
+
+  function downloadSectionCsv() {
+    const rows = getExportRows();
+    if (!rows.length) {
+      setStatus({ type: 'warn', message: 'No records to export for this section.' });
+      return;
+    }
+
+    const columns = Object.keys(rows[0]);
+    const csv = [
+      columns.join(','),
+      ...rows.map((row) => columns.map((column) => csvValue(row[column])).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `admin-${activeSection}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function getExportRows() {
+    if (activeSection === 'users') return filteredUsers;
+    if (activeSection === 'loginAttempts') return filteredLoginAttempts;
+    if (activeSection === 'alerts') return filteredAlerts;
+    if (activeSection === 'threads') return data.threads || [];
+    if (activeSection === 'integrity') return data.integrity || [];
+    if (activeSection === 'ephemeral') return data.ephemeral || [];
+    if (activeSection === 'systemLogs') return data.systemLogs || [];
+    if (activeSection === 'audit') return data.audit || [];
+    if (activeSection === 'devsecops') return data.devsecops?.scanSummaries || [];
+    return [];
+  }
+
+  function csvValue(value: unknown) {
+    if (value === null || value === undefined) return '""';
+    const raw = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    const escaped = raw.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
+
+  const filteredUsers = (data.users || []).filter((user: any) => {
+    const userStatus = String(user.accountStatus || '').toLowerCase();
+    const statusMatch = userStatusFilter === 'all' || userStatus === userStatusFilter;
+    return statusMatch;
+  });
+
+  const filteredAlerts = (data.alerts || []).filter((alert: any) => {
+    const statusMatch = alertStatusFilter === 'all' || String(alert.status || '').toLowerCase() === alertStatusFilter;
+    const riskMatch = alertRiskFilter === 'all' || String(alert.riskLevel || '').toLowerCase() === alertRiskFilter;
+    return statusMatch && riskMatch;
+  });
+
+  const filteredLoginAttempts = (data.loginAttempts || []).filter((attempt: any) => {
+    if (loginRiskFilter === 'all') return true;
+    return String(attempt.riskLevel || '').toLowerCase() === loginRiskFilter;
+  });
 
   useEffect(() => {
     if (storedUser?.role !== 'admin') {
@@ -264,6 +360,27 @@ function AdminDashboardPage() {
     }
   }
 
+  function jumpToSection(section: string) {
+    setActiveSection(section);
+    setStatus({ type: '', message: '' });
+    setSidebarOpen(false);
+  }
+
+  function goToProfile(openSection?: string) {
+    if (openSection) {
+      navigate('/profile', { state: { openSection } });
+      return;
+    }
+    navigate('/profile');
+  }
+
+  function handleSignOut() {
+    localStorage.removeItem('secureChatToken');
+    localStorage.removeItem('secureChatUser');
+    window.dispatchEvent(new Event('securechat-auth-changed'));
+    navigate('/login', { replace: true });
+  }
+
   function renderOverview() {
     const summary = data.overview.summary || {};
     const cards = [
@@ -304,6 +421,11 @@ function AdminDashboardPage() {
       <>
         <div className="admin-toolbar">
           <input value={userSearch} onChange={(event: ChangeEvent<HTMLInputElement>) => setUserSearch(event.target.value)} placeholder="Search customers" />
+          <select value={userStatusFilter} onChange={(event) => setUserStatusFilter(event.target.value as 'all' | 'active' | 'suspended')}>
+            <option value="all">All statuses</option>
+            <option value="active">Active only</option>
+            <option value="suspended">Suspended only</option>
+          </select>
           <button type="button" className="secondary" onClick={() => refreshUsers()}>Search</button>
         </div>
         <div className="admin-table-wrap">
@@ -312,7 +434,7 @@ function AdminDashboardPage() {
               <tr><th>Customer ID</th><th>Name</th><th>Email</th><th>User type</th><th>2FA</th><th>Status</th><th>Last login</th><th>Failed</th><th>Created</th><th>Actions</th></tr>
             </thead>
             <tbody>
-              {data.users.map((user: any) => (
+              {filteredUsers.map((user: any) => (
                 <tr key={user.id}>
                   <td>{user.id}</td><td>{user.name}</td><td>{user.email}</td><td><span className={badgeClass(user.role)}>{user.role}</span></td>
                   <td><span className={badgeClass(user.twoFactorStatus)}>{user.twoFactorStatus}</span></td><td><span className={badgeClass(user.accountStatus)}>{user.accountStatus}</span></td>
@@ -343,31 +465,62 @@ function AdminDashboardPage() {
   }
 
   function renderLoginAttempts() {
-    return <Table rows={data.loginAttempts} columns={['id', 'userEmail', 'ipAddress', 'deviceBrowser', 'loginTime', 'loginStatus', 'failureReason', 'twoFactorStatus', 'riskLevel']} dateKeys={['loginTime']} />;
+    return (
+      <>
+        <div className="admin-toolbar">
+          <select value={loginRiskFilter} onChange={(event) => setLoginRiskFilter(event.target.value as 'all' | 'high' | 'medium' | 'low')}>
+            <option value="all">All risk levels</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <span className="admin-inline-note">Showing {filteredLoginAttempts.length} attempts</span>
+        </div>
+        <Table rows={filteredLoginAttempts} columns={['id', 'userEmail', 'ipAddress', 'deviceBrowser', 'loginTime', 'loginStatus', 'failureReason', 'twoFactorStatus', 'riskLevel']} dateKeys={['loginTime']} />
+      </>
+    );
   }
 
   function renderAlerts() {
     return (
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead><tr><th>Alert ID</th><th>Customer ID</th><th>Activity</th><th>Description</th><th>Risk</th><th>Timestamp</th><th>Status</th><th>Admin notes</th><th>Actions</th></tr></thead>
-          <tbody>
-            {data.alerts.map((alert: any) => (
-              <tr key={alert._id}>
-                <td>{alert._id}</td><td>{alert.userId?._id || alert.userId || '—'}</td><td>{alert.activityType}</td><td>{alert.description}</td>
-                <td><span className={badgeClass(alert.riskLevel)}>{alert.riskLevel}</span></td><td>{formatDate(alert.createdAt)}</td>
-                <td><span className={badgeClass(alert.status)}>{alert.status}</span></td><td>{alert.adminNotes || '—'}</td>
-                <td className="admin-actions">
-                  <button onClick={() => updateAlert(alert._id, 'investigating')}>Investigating</button>
-                  <button onClick={() => updateAlert(alert._id, 'resolved')}>Resolved</button>
-                  <button onClick={() => updateAlert(alert._id, 'note')}>Add note</button>
-                  <button onClick={() => updateAlert(alert._id, 'disable-user')}>Suspend customer</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <>
+        <div className="admin-toolbar">
+          <select value={alertStatusFilter} onChange={(event) => setAlertStatusFilter(event.target.value as 'all' | 'open' | 'investigating' | 'resolved')}>
+            <option value="all">All alert states</option>
+            <option value="open">Open</option>
+            <option value="investigating">Investigating</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <select value={alertRiskFilter} onChange={(event) => setAlertRiskFilter(event.target.value as 'all' | 'critical' | 'high' | 'medium' | 'low')}>
+            <option value="all">All risk levels</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <span className="admin-inline-note">Showing {filteredAlerts.length} alerts</span>
+        </div>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead><tr><th>Alert ID</th><th>Customer ID</th><th>Activity</th><th>Description</th><th>Risk</th><th>Timestamp</th><th>Status</th><th>Admin notes</th><th>Actions</th></tr></thead>
+            <tbody>
+              {filteredAlerts.map((alert: any) => (
+                <tr key={alert._id}>
+                  <td>{alert._id}</td><td>{alert.userId?._id || alert.userId || '—'}</td><td>{alert.activityType}</td><td>{alert.description}</td>
+                  <td><span className={badgeClass(alert.riskLevel)}>{alert.riskLevel}</span></td><td>{formatDate(alert.createdAt)}</td>
+                  <td><span className={badgeClass(alert.status)}>{alert.status}</span></td><td>{alert.adminNotes || '—'}</td>
+                  <td className="admin-actions">
+                    <button onClick={() => updateAlert(alert._id, 'investigating')}>Investigating</button>
+                    <button onClick={() => updateAlert(alert._id, 'resolved')}>Resolved</button>
+                    <button onClick={() => updateAlert(alert._id, 'note')}>Add note</button>
+                    <button onClick={() => updateAlert(alert._id, 'disable-user')}>Suspend customer</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
     );
   }
 
@@ -421,34 +574,111 @@ function AdminDashboardPage() {
   if (storedUser?.role !== 'admin') return null;
 
   return (
-    <section className="admin-shell">
-      <aside className="admin-sidebar">
-        <div>
-          <p className="brand-kicker">Admin SOC</p>
-          <h2>Secure Chat Control</h2>
-        </div>
-        <nav aria-label="Admin dashboard sections">
-          {navItems.map(([id, label]) => (
-            <button key={id} type="button" className={activeSection === id ? 'active' : ''} onClick={() => setActiveSection(id)}>
-              {label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      <main className="admin-main">
-        <header className="admin-header">
-          <div>
-            <p className="brand-kicker">RBAC Protected</p>
-            <h1>{navItems.find(([id]) => id === activeSection)?.[1]}</h1>
-            <p>{sectionDescriptions[activeSection]}</p>
+    <section className={`admin-shell${sidebarOpen ? ' admin-shell--sidebar-open' : ''}`}>
+      <header className="app-navbar admin-navbar">
+        <div className="navbar-inner">
+          <div className="app-navbar-brand">
+            <img src="/shadow-link-logo.png" alt="Shadow Link" className="navbar-logo" />
+            <span className="navbar-brand-name">Admin Console</span>
           </div>
-          <button type="button" className="secondary" onClick={loadDashboard}>Refresh</button>
-        </header>
 
-        {status.message && <p className={`status ${status.type}`}>{status.message}</p>}
-        {loading ? <p className="status">Loading admin dashboard...</p> : renderActiveSection()}
-      </main>
+          <nav className="app-navbar-links" aria-label="Admin navigation">
+            <NavLink
+              to="/profile"
+              className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
+              onClick={() => setStatus({ type: '', message: '' })}
+            >
+              Profile
+            </NavLink>
+          </nav>
+
+          <div className="app-navbar-end admin-navbar-end">
+            <button
+              type="button"
+              className="navbar-burger admin-sidebar-toggle"
+              aria-label={sidebarOpen ? 'Close admin menu' : 'Open admin menu'}
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen((value) => !value)}
+            >
+              <span /><span /><span />
+            </button>
+
+            <details className="admin-profile-menu">
+              <summary>{currentUser?.username || 'Admin'}</summary>
+              <div className="admin-profile-menu-list">
+                <button type="button" onClick={() => goToProfile()}>Open profile</button>
+                <button type="button" onClick={() => goToProfile('phone')}>Phone settings</button>
+                <button type="button" onClick={() => goToProfile('security')}>Security & MFA</button>
+                <button type="button" onClick={() => goToProfile('security')}>Change password</button>
+                <button type="button" onClick={handleSignOut}>Logout</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </header>
+
+      <div className="admin-layout">
+        <aside className="admin-sidebar">
+          <div className="admin-sidebar-head">
+            <div>
+              <p className="brand-kicker">Admin Menu</p>
+              <h2>Control Center</h2>
+            </div>
+            <button
+              type="button"
+              className="admin-sidebar-close"
+              aria-label="Close admin menu"
+              onClick={() => setSidebarOpen(false)}
+            >
+              ×
+            </button>
+          </div>
+
+          <nav aria-label="Admin dashboard sections">
+            {navItems.map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={activeSection === id ? 'active' : ''}
+                onClick={() => jumpToSection(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <main className="admin-main">
+          <div className="admin-summary-bar">
+            <span className="admin-pill alert">Open alerts: {openAlertsCount}</span>
+            <span className="admin-pill warn">High-risk logins: {highRiskLoginCount}</span>
+            <span className="admin-pill danger">Integrity failures: {integrityFailureCount}</span>
+            <div className="admin-summary-actions">
+              <button type="button" className="secondary" onClick={() => jumpToSection('alerts')}>Investigate alerts</button>
+              <button type="button" className="secondary" onClick={() => jumpToSection('loginAttempts')}>Review logins</button>
+              <button type="button" className="secondary" onClick={() => jumpToSection('integrity')}>Check integrity</button>
+            </div>
+          </div>
+
+          <header className="admin-header">
+            <div>
+              <p className="brand-kicker">RBAC Protected</p>
+              <h1>{navItems.find(([id]) => id === activeSection)?.[1]}</h1>
+              <p>{sectionDescriptions[activeSection]}</p>
+              <p className="admin-last-updated">Last updated: {lastUpdatedAt ? formatDate(lastUpdatedAt.toISOString()) : '—'}</p>
+            </div>
+            <div className="admin-header-actions">
+              <button type="button" className="secondary" onClick={refreshActiveSection}>
+                {sectionRefreshing ? 'Refreshing…' : 'Refresh section'}
+              </button>
+              <button type="button" className="secondary" onClick={downloadSectionCsv}>Export CSV</button>
+            </div>
+          </header>
+
+          {status.message && <p className={`status ${status.type}`}>{status.message}</p>}
+          {loading ? <p className="status">Loading admin dashboard...</p> : renderActiveSection()}
+        </main>
+      </div>
     </section>
   );
 }

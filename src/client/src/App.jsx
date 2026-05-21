@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import AdminDashboardPage from './pages/admin'
 import ChatPage from './pages/chat'
+import ContactsPage from './pages/contacts'
 import CustomerDashboardPage from './pages/dashboard'
 import LoginPage from './pages/login'
 import ProfilePage from './pages/profile'
@@ -15,7 +16,7 @@ function App() {
   const navigate = useNavigate()
   const [theme, setTheme] = useState(() => localStorage.getItem('secureChatTheme') || 'light')
   const [token, setToken] = useState(() => localStorage.getItem('secureChatToken'))
-  const isLogin = location.pathname === '/login' || location.pathname === '/'
+  const [navOpen, setNavOpen] = useState(false)
   const storedUser = localStorage.getItem('secureChatUser')
   const currentUser = storedUser ? JSON.parse(storedUser) : null
   const isAdmin = currentUser?.role === 'admin'
@@ -64,104 +65,81 @@ function App() {
     localStorage.removeItem('secureChatUser')
     window.dispatchEvent(new Event('securechat-auth-changed'))
     navigate('/login', { replace: true })
+    setNavOpen(false)
   }
 
   if (token) {
     return (
-      <main className={location.pathname.startsWith('/admin') ? 'admin-route-shell' : 'profile-shell'}>
+      <main className={location.pathname.startsWith('/admin') ? 'admin-route-shell' : 'app-shell'}>
         {!location.pathname.startsWith('/admin') && (
-          <header className="profile-shell-header">
-            <div>
-              <p className="brand-kicker">Shadow Link</p>
-              <h1>{isAdmin ? 'Admin workspace' : 'Customer workspace'}</h1>
-            </div>
-            <div className="shell-actions">
-              {!isAdmin && (
-                <NavLink to="/dashboard" className="secondary">
-                  Dashboard
+          <header className="app-navbar">
+            <div className="navbar-inner">
+              <div className="app-navbar-brand">
+                <img src="/shadow-link-logo.png" alt="Shadow Link" className="navbar-logo" />
+                <span className="navbar-brand-name">Shadow Link</span>
+              </div>
+              <nav className={`app-navbar-links${navOpen ? ' open' : ''}`} aria-label="Main navigation">
+                {!isAdmin && (
+                  <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Dashboard
+                  </NavLink>
+                )}
+                {!isAdmin && (
+                  <NavLink to="/contacts" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Contacts
+                  </NavLink>
+                )}
+                {!isAdmin && (
+                  <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Chat
+                  </NavLink>
+                )}
+                <NavLink to="/profile" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                  Profile
                 </NavLink>
-              )}
-              <NavLink to="/chat" className="secondary">
-                Secure chat
-              </NavLink>
-              <NavLink to="/profile" className="secondary">
-                Profile
-              </NavLink>
-              {isAdmin && (
-                <NavLink to="/admin" className="secondary">
-                  Admin dashboard
-                </NavLink>
-              )}
-              <button type="button" className="secondary" onClick={handleSignOut}>
-                Sign out
-              </button>
+                {isAdmin && (
+                  <NavLink to="/admin" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Admin
+                  </NavLink>
+                )}
+              </nav>
+              <div className="app-navbar-end">
+                <span className="navbar-user">{currentUser?.username}</span>
+                <button type="button" className="sign-out-btn" onClick={handleSignOut}>
+                  Sign out
+                </button>
+                <button
+                  type="button"
+                  className={`navbar-burger${navOpen ? ' active' : ''}`}
+                  aria-label={navOpen ? 'Close menu' : 'Open menu'}
+                  aria-expanded={navOpen}
+                  onClick={() => setNavOpen((v) => !v)}
+                >
+                  <span /><span /><span />
+                </button>
+              </div>
             </div>
           </header>
         )}
-        <Routes>
-          <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
-          <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
-          <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
-          <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
-        </Routes>
+        <div className="app-page">
+          <Routes>
+            <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
+            <Route path="/contacts" element={isAdmin ? <Navigate to="/admin" replace /> : <ContactsPage />} />
+            <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
+            <Route path="/chat" element={isAdmin ? <Navigate to="/admin" replace /> : <ChatPage />} />
+            <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
+            <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
+            <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
+          </Routes>
+        </div>
       </main>
     )
   }
 
   return (
-    <main className="brand-shell">
-      <section className="brand-panel">
-        <div className="brand-hero-content">
-          <img className="brand-logo" src="/shadow-link-logo.png" alt="Shadow Link" />
-          <h1 className="sr-only">Shadow Link</h1>
-          <p className="brand-copy">
-            Protected messaging for teams that need trusted identity, private conversations,
-            and a calm workspace for secure collaboration.
-          </p>
-          <div className="brand-points" aria-label="Platform highlights">
-            <span>End-to-end encrypted</span>
-            <span>JWT protected routes</span>
-            <span>Role-based access</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="auth-panel" aria-label="Authentication panel">
-        <div className="auth-brand">
-          <img src="/shadow-link-logo.png" alt="" aria-hidden="true" />
-          <div>
-            <p>Shadow Link</p>
-            <span>Secure access</span>
-          </div>
-        </div>
-
-        <div className="tab-row" role="tablist" aria-label="Auth mode">
-          <NavLink
-            to="/login"
-            className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}
-            role="tab"
-            aria-selected={isLogin}
-          >
-            Sign in
-          </NavLink>
-          <NavLink
-            to="/register"
-            className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}
-            role="tab"
-            aria-selected={!isLogin}
-          >
-            Register
-          </NavLink>
-        </div>
-
-        <div className="auth-head">
-          <h2>{isLogin ? 'Sign in to Shadow Link' : 'Create your Shadow Link account'}</h2>
-          <p>{isLogin ? 'Use your email and password to continue.' : 'Only a few details are required to get started.'}</p>
-        </div>
-
+    <main className="auth-shell">
+      <section className="auth-panel auth-panel--minimal" aria-label="Authentication panel">
         <Routes>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<LoginPage />} />

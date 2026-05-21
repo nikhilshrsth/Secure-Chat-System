@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { type AxiosError } from 'axios';
 import { createApiClient } from '../lib/api';
 
@@ -25,39 +25,57 @@ type DashboardOutgoing = {
   decidedAt?: string | null;
 };
 
-function formatDate(value?: string | null) {
+function formatTime(value?: string | null) {
   if (!value) return '—';
-  return new Date(value).toLocaleString();
+  const date = new Date(value);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isToday) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function avatarHue(name: string): number {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) & 0xffffffff;
+  return Math.abs(hash) % 360;
+}
+
+function initials(name: string) {
+  return name.split(' ').map((w) => w[0] || '').slice(0, 2).join('').toUpperCase();
 }
 
 function CustomerDashboardPage() {
   const api = useMemo(() => createApiClient(), []);
+  const navigate = useNavigate();
   const currentUser = useMemo(() => {
     const raw = localStorage.getItem('secureChatUser');
     return raw ? JSON.parse(raw) : null;
   }, []);
+
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [threads, setThreads] = useState<DashboardThread[]>([]);
   const [incoming, setIncoming] = useState<DashboardIncoming[]>([]);
   const [outgoing, setOutgoing] = useState<DashboardOutgoing[]>([]);
 
   async function loadDashboard() {
     setLoading(true);
-    setStatus('');
+    setErrorMsg('');
     try {
-      const [threadsResponse, incomingResponse, outgoingResponse] = await Promise.all([
+      const [threadsRes, incomingRes, outgoingRes] = await Promise.all([
         api.get('/api/chat/threads'),
         api.get('/api/chat/requests/incoming'),
         api.get('/api/chat/requests/outgoing'),
       ]);
-
-      setThreads(threadsResponse.data.threads || []);
-      setIncoming(incomingResponse.data.requests || []);
-      setOutgoing(outgoingResponse.data.requests || []);
+      setThreads(threadsRes.data.threads || []);
+      setIncoming(incomingRes.data.requests || []);
+      setOutgoing(outgoingRes.data.requests || []);
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
-      setStatus(axiosError.response?.data?.message || 'Unable to load dashboard metrics.');
+      setErrorMsg(axiosError.response?.data?.message || 'Unable to load dashboard.');
     } finally {
       setLoading(false);
     }
@@ -68,108 +86,157 @@ function CustomerDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const stats = {
-    activeThreads: threads.length,
-    incomingRequests: incoming.length,
-    outgoingPending: outgoing.filter((item) => item.status === 'pending').length,
-    outgoingRejected: outgoing.filter((item) => item.status === 'rejected').length,
-  };
-
   const recentThreads = [...threads]
     .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime())
-    .slice(0, 5);
+    .slice(0, 6);
+
+  const pendingIn = incoming.filter((r) => r);
+  const pendingOut = outgoing.filter((r) => r.status === 'pending');
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
   return (
-    <section className="customer-dashboard">
-      <header className="dashboard-header card">
-        <div>
-          <p className="brand-kicker">Customer Dashboard</p>
-          <h2>Welcome{currentUser?.username ? `, ${currentUser.username}` : ''}</h2>
-          <p>Track chat requests, active conversations, and your secure communication status.</p>
+    <div className="dash-root">
+      {/* ── hero ─────────────────────────────────── */}
+      <header className="dash-hero">
+        <div className="dash-hero-text">
+          <p className="brand-kicker">Shadow Link</p>
+          <h2>{greeting}{currentUser?.username ? `, ${currentUser.username}` : ''} 👋</h2>
+          <p className="dash-hero-sub">Your end-to-end encrypted workspace is ready.</p>
         </div>
-        <div className="dashboard-links">
-          <NavLink className="secondary" to="/chat">Open chat</NavLink>
-          <NavLink className="secondary" to="/profile">Manage profile</NavLink>
-          <button type="button" className="secondary" onClick={loadDashboard}>Refresh</button>
+        <div className="dash-hero-actions">
+          <button type="button" className="dash-cta" onClick={() => navigate('/chat')}>
+            <span className="dash-cta-icon">💬</span>Open chat
+          </button>
+          <button type="button" className="dash-cta secondary" onClick={() => navigate('/contacts')}>
+            <span className="dash-cta-icon">👥</span>Contacts
+          </button>
+          <button type="button" className="dash-cta secondary" onClick={loadDashboard} aria-label="Refresh dashboard">
+            <span className="dash-cta-icon">↻</span>Refresh
+          </button>
         </div>
       </header>
 
-      <div className="dashboard-grid">
-        <article className="card stat-card"><span>Active threads</span><strong>{stats.activeThreads}</strong></article>
-        <article className="card stat-card"><span>Incoming requests</span><strong>{stats.incomingRequests}</strong></article>
-        <article className="card stat-card"><span>Outgoing pending</span><strong>{stats.outgoingPending}</strong></article>
-        <article className="card stat-card"><span>Rejected by recipients</span><strong>{stats.outgoingRejected}</strong></article>
+      {/* ── KPI row ──────────────────────────────── */}
+      <div className="dash-kpi-row">
+        {[
+          { label: 'Active conversations', value: threads.length, icon: '💬', color: 'blue' },
+          { label: 'Contacts', value: threads.length, icon: '👥', color: 'purple' },
+          { label: 'Incoming requests', value: pendingIn.length, icon: '📩', color: pendingIn.length > 0 ? 'amber' : 'neutral' },
+          { label: 'Outgoing pending', value: pendingOut.length, icon: '⏳', color: pendingOut.length > 0 ? 'amber' : 'neutral' },
+        ].map(({ label, value, icon, color }) => (
+          <article key={label} className={`dash-kpi dash-kpi--${color}`}>
+            <span className="dash-kpi-icon">{icon}</span>
+            <strong className="dash-kpi-value">{loading ? '…' : value}</strong>
+            <span className="dash-kpi-label">{label}</span>
+          </article>
+        ))}
       </div>
 
-      <div className="dashboard-grid">
-        <section className="card">
-          <header className="card-header">
-            <h3>Pending incoming requests</h3>
-            <NavLink to="/chat" className="secondary">Review in chat</NavLink>
-          </header>
-          {incoming.length === 0 ? (
-            <p className="empty-state">No pending requests.</p>
-          ) : (
-            <ul className="dashboard-list">
-              {incoming.slice(0, 5).map((request) => (
-                <li key={request.id}>
-                  <strong>{request.requester.username}</strong>
-                  <span>{request.requester.email}</span>
-                  <span className="muted">{formatDate(request.createdAt)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+      {errorMsg && <p className="status error">{errorMsg}</p>}
 
-        <section className="card">
-          <header className="card-header">
-            <h3>Outgoing requests</h3>
+      <div className="dash-body">
+        {/* ── Recent conversations ─────────────────── */}
+        <section className="dash-panel">
+          <header className="dash-panel-head">
+            <h3>Recent conversations</h3>
+            <button type="button" className="dash-link" onClick={() => navigate('/contacts')}>View all →</button>
           </header>
-          {outgoing.length === 0 ? (
-            <p className="empty-state">You have not sent any chat requests yet.</p>
-          ) : (
-            <ul className="dashboard-list">
-              {outgoing.slice(0, 5).map((request) => (
-                <li key={request.id}>
-                  <strong>{request.recipient.username}</strong>
-                  <span>{request.recipient.email}</span>
-                  <span className={`badge ${request.status === 'accepted' ? 'good' : request.status === 'rejected' ? 'danger' : 'warn'}`}>
-                    {request.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
+          {loading && <p className="status">Loading…</p>}
+          {!loading && recentThreads.length === 0 && (
+            <div className="dash-empty">
+              <p>No conversations yet.</p>
+              <button type="button" className="dash-cta" onClick={() => navigate('/chat')}>Start one</button>
+            </div>
           )}
-        </section>
-      </div>
-
-      <section className="card">
-        <header className="card-header">
-          <h3>Recent active threads</h3>
-          <NavLink to="/chat" className="secondary">Open chat</NavLink>
-        </header>
-        {recentThreads.length === 0 ? (
-          <p className="empty-state">No active threads yet. Search for a customer in the chat page to start a secure conversation.</p>
-        ) : (
-          <ul className="dashboard-list">
+          <ul className="dash-thread-list">
             {recentThreads.map((thread) => {
-              const peer = thread.participants.find((participant) => participant.id !== currentUser?.id);
+              const peer = thread.participants.find((p) => p.id !== currentUser?.id);
+              const hue = avatarHue(peer?.username || '');
               return (
-                <li key={thread.id}>
-                  <strong>{peer?.username || 'Group thread'}</strong>
-                  <span>{thread.messageCount} message{thread.messageCount === 1 ? '' : 's'}</span>
-                  <span className="muted">Last active {formatDate(thread.lastActivityAt)}</span>
+                <li
+                  key={thread.id}
+                  className="dash-thread-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => navigate(`/chat?thread=${thread.id}`)}
+                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/chat?thread=${thread.id}`)}
+                >
+                  <div className="dash-avatar" style={{ '--avatar-hue': hue } as React.CSSProperties}>
+                    {initials(peer?.username || '?')}
+                  </div>
+                  <div className="dash-thread-info">
+                    <strong>{peer?.username || 'Group'}</strong>
+                    <span className="dash-thread-sub">{peer?.email}</span>
+                  </div>
+                  <div className="dash-thread-meta">
+                    <span className="dash-thread-count">{thread.messageCount} msg{thread.messageCount !== 1 ? 's' : ''}</span>
+                    <span className="dash-thread-time">{formatTime(thread.lastActivityAt)}</span>
+                  </div>
                 </li>
               );
             })}
           </ul>
-        )}
-      </section>
+        </section>
 
-      {loading && <p className="status">Loading dashboard...</p>}
-      {status && <p className="status error">{status}</p>}
-    </section>
+        {/* ── Right column ─────────────────────────── */}
+        <div className="dash-aside">
+          {/* Pending incoming requests */}
+          <section className="dash-panel">
+            <header className="dash-panel-head">
+              <h3>Incoming requests {pendingIn.length > 0 && <span className="dash-badge">{pendingIn.length}</span>}</h3>
+              <button type="button" className="dash-link" onClick={() => navigate('/chat')}>Review →</button>
+            </header>
+            {loading && <p className="status">Loading…</p>}
+            {!loading && pendingIn.length === 0 && <p className="dash-empty-sm">No pending requests.</p>}
+            <ul className="dash-req-list">
+              {pendingIn.slice(0, 4).map((req) => {
+                const hue = avatarHue(req.requester.username);
+                return (
+                  <li key={req.id} className="dash-req-item">
+                    <div className="dash-avatar dash-avatar--sm" style={{ '--avatar-hue': hue } as React.CSSProperties}>
+                      {initials(req.requester.username)}
+                    </div>
+                    <div className="dash-req-info">
+                      <strong>{req.requester.username}</strong>
+                      <span>{req.requester.email}</span>
+                    </div>
+                    <span className="dash-req-time">{formatTime(req.createdAt)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          {/* Outgoing requests */}
+          <section className="dash-panel">
+            <header className="dash-panel-head">
+              <h3>Outgoing requests</h3>
+            </header>
+            {!loading && outgoing.length === 0 && <p className="dash-empty-sm">None sent yet.</p>}
+            <ul className="dash-req-list">
+              {outgoing.slice(0, 4).map((req) => {
+                const hue = avatarHue(req.recipient.username);
+                return (
+                  <li key={req.id} className="dash-req-item">
+                    <div className="dash-avatar dash-avatar--sm" style={{ '--avatar-hue': hue } as React.CSSProperties}>
+                      {initials(req.recipient.username)}
+                    </div>
+                    <div className="dash-req-info">
+                      <strong>{req.recipient.username}</strong>
+                      <span>{req.recipient.email}</span>
+                    </div>
+                    <span className={`badge ${req.status === 'accepted' ? 'good' : req.status === 'rejected' ? 'danger' : 'warn'}`}>
+                      {req.status}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
   );
 }
 

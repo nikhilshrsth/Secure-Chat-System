@@ -244,7 +244,7 @@ async function listMessagesForThread({ threadId, userId, limit = 50 }) {
   return ordered.map((message) => mapMessage(message, userId, replyMap));
 }
 
-async function sendMessage({ threadId, senderId, text, replyToMessageId = null, logContext = {} }) {
+async function sendMessage({ threadId, senderId, text, replyToMessageId = null, clientMessageId = null, logContext = {} }) {
   const normalizedEncryptedPayload = validateEncryptedPayload(text);
   const thread = await assertThreadAccess(threadId, senderId);
 
@@ -325,7 +325,10 @@ async function sendMessage({ threadId, senderId, text, replyToMessageId = null, 
 
   return {
     threadId: String(thread._id),
-    payload: mapMessage(populated, senderId, replyMap),
+    payload: {
+      ...mapMessage(populated, senderId, replyMap),
+      clientMessageId: clientMessageId ? String(clientMessageId) : null,
+    },
     participantIds: participants,
     receiverId,
     logContext,

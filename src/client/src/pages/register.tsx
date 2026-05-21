@@ -1,6 +1,7 @@
 
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import axios, { type AxiosError } from 'axios';
+import { Link } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 
 function RegisterPage() {
@@ -69,6 +70,13 @@ function RegisterPage() {
 
   return (
     <div className="auth-form-wrapper">
+      <div className="auth-logo-wrap">
+        <img src="/scslogo.png" alt="SCS" className="auth-logo" />
+      </div>
+      <div className="auth-page-head">
+        <h1>{otpSent ? 'Verify email OTP' : 'Create account'}</h1>
+        <p>{otpSent ? 'Enter the code sent to your email.' : 'Register for secure collaboration.'}</p>
+      </div>
       {!otpSent ? (
         <form className="auth-form" onSubmit={onSubmit}>
           <label>
@@ -133,6 +141,11 @@ function RegisterPage() {
             {otpLoading ? 'Verifying...' : 'Verify & Complete Registration'}
           </button>
         </form>
+      )}
+      {!otpSent && (
+        <p className="auth-switch">
+          Already have an account? <Link to="/login">Sign in</Link>
+        </p>
       )}
       {error && <p className="status error" role="alert">{error}</p>}
       {success && <p className="status success" role="status">{success}</p>}
