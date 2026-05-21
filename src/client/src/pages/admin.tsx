@@ -5,7 +5,7 @@ import { createApiClient } from '../lib/api';
 
 const navItems = [
   ['overview', 'Security Overview'],
-  ['users', 'Customer Accounts'],
+  ['users', 'User Accounts'],
   ['loginAttempts', 'Login Attempts'],
   ['alerts', 'Suspicious Alerts'],
   ['threads', 'Threads & Groups'],
@@ -20,7 +20,7 @@ const navItems = [
 // monitoring and cybersecurity assessment while deliberately showing metadata only.
 const sectionDescriptions: Record<string, string> = {
   overview: 'Aggregated security metadata for authentication, encrypted traffic, integrity checks, and CI/CD posture.',
-  users: 'Customer account oversight for activation, suspension, and login history. Admins cannot edit customer profile information, roles, or 2FA secrets.',
+  users: 'User account oversight for activation, suspension, and login history. Admins cannot edit user profile information, roles, or 2FA secrets.',
   loginAttempts: 'Authentication telemetry used to detect brute force, repeated MFA failures, disabled-account attempts, and IP anomalies.',
   alerts: 'Suspicious activity queue for admin triage, notes, status changes, and containment actions.',
   threads: 'Direct and group chat metadata only; encrypted message plaintext and keys are never displayed.',
@@ -316,16 +316,16 @@ function AdminDashboardPage() {
   }, [activeSection]);
 
   async function runUserAction(userId: string, action: string) {
-    if (action === 'disable' && !window.confirm('Suspend this customer account?')) return;
-    if (action === 'enable' && !window.confirm('Activate this customer account?')) return;
+    if (action === 'disable' && !window.confirm('Suspend this user account?')) return;
+    if (action === 'enable' && !window.confirm('Activate this user account?')) return;
 
     try {
       await api.post(`/api/admin/users/${userId}/${action}`, { reason: `Admin dashboard ${action}` });
       await refreshUsers();
-      setStatus({ type: 'success', message: 'Customer account status updated.' });
+      setStatus({ type: 'success', message: 'User account status updated.' });
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
-      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Customer account action failed.' });
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'User account action failed.' });
     }
   }
 
@@ -347,7 +347,7 @@ function AdminDashboardPage() {
         if (adminNotes === null) return;
         await api.patch(`/api/admin/alerts/${alertId}/note`, { adminNotes });
       } else if (action === 'disable-user') {
-        if (!window.confirm('Suspend the customer related to this alert?')) return;
+        if (!window.confirm('Suspend the user related to this alert?')) return;
         await api.post(`/api/admin/alerts/${alertId}/disable-user`);
       } else {
         await api.patch(`/api/admin/alerts/${alertId}/status`, { status: action });
@@ -384,8 +384,8 @@ function AdminDashboardPage() {
   function renderOverview() {
     const summary = data.overview.summary || {};
     const cards = [
-      ['Total customers', summary.totalCustomers],
-      ['Active customers', summary.activeCustomers],
+      ['Total users', summary.totalCustomers],
+      ['Active users', summary.activeCustomers],
       ['Active direct chats', summary.activeDirectChats],
       ['Active group chats', summary.activeGroupChats],
       ['Encrypted messages sent', summary.totalEncryptedMessagesSent],
@@ -420,7 +420,7 @@ function AdminDashboardPage() {
     return (
       <>
         <div className="admin-toolbar">
-          <input value={userSearch} onChange={(event: ChangeEvent<HTMLInputElement>) => setUserSearch(event.target.value)} placeholder="Search customers" />
+          <input value={userSearch} onChange={(event: ChangeEvent<HTMLInputElement>) => setUserSearch(event.target.value)} placeholder="Search users" />
           <select value={userStatusFilter} onChange={(event) => setUserStatusFilter(event.target.value as 'all' | 'active' | 'suspended')}>
             <option value="all">All statuses</option>
             <option value="active">Active only</option>
@@ -431,7 +431,7 @@ function AdminDashboardPage() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
-              <tr><th>Customer ID</th><th>Name</th><th>Email</th><th>User type</th><th>2FA</th><th>Status</th><th>Last login</th><th>Failed</th><th>Created</th><th>Actions</th></tr>
+              <tr><th>User ID</th><th>Name</th><th>Email</th><th>Role</th><th>2FA</th><th>Status</th><th>Last login</th><th>Failed</th><th>Created</th><th>Actions</th></tr>
             </thead>
             <tbody>
               {filteredUsers.map((user: any) => (
@@ -451,7 +451,7 @@ function AdminDashboardPage() {
         </div>
         {loginHistory.length > 0 && (
           <section className="admin-panel">
-            <h3>Customer login history</h3>
+            <h3>User login history</h3>
             <div className="admin-table-wrap">
               <table className="admin-table compact">
                 <thead><tr><th>Log ID</th><th>Event</th><th>IP</th><th>Time</th><th>Description</th><th>Severity</th></tr></thead>
@@ -502,7 +502,7 @@ function AdminDashboardPage() {
         </div>
         <div className="admin-table-wrap">
           <table className="admin-table">
-            <thead><tr><th>Alert ID</th><th>Customer ID</th><th>Activity</th><th>Description</th><th>Risk</th><th>Timestamp</th><th>Status</th><th>Admin notes</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Alert ID</th><th>User ID</th><th>Activity</th><th>Description</th><th>Risk</th><th>Timestamp</th><th>Status</th><th>Admin notes</th><th>Actions</th></tr></thead>
             <tbody>
               {filteredAlerts.map((alert: any) => (
                 <tr key={alert._id}>
@@ -513,7 +513,7 @@ function AdminDashboardPage() {
                     <button onClick={() => updateAlert(alert._id, 'investigating')}>Investigating</button>
                     <button onClick={() => updateAlert(alert._id, 'resolved')}>Resolved</button>
                     <button onClick={() => updateAlert(alert._id, 'note')}>Add note</button>
-                    <button onClick={() => updateAlert(alert._id, 'disable-user')}>Suspend customer</button>
+                    <button onClick={() => updateAlert(alert._id, 'disable-user')}>Suspend user</button>
                   </td>
                 </tr>
               ))}

@@ -73,6 +73,12 @@ type ChatThread = {
     text: string;
     senderName: string;
     createdAt: string;
+    encryptedPayload?: {
+      ciphertext: string;
+      iv: string;
+      authTag: string;
+      algorithm: string;
+    } | null;
   } | null;
 };
 
@@ -195,6 +201,7 @@ function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
   const [status, setStatus] = useState({ type: '', message: '' });
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
@@ -292,17 +299,32 @@ function ChatPage() {
     return mapped;
   }
 
+  async function decryptThreadPreviews(rawThreads: ChatThread[]): Promise<ChatThread[]> {
+    return Promise.all(
+      rawThreads.map(async (thread) => {
+        const ep = thread.lastMessage?.encryptedPayload;
+        if (!ep) return thread;
+        try {
+          const threadKey = await ensureThreadKey(thread.id);
+          const text = await decryptMessageText(ep, threadKey);
+          return { ...thread, lastMessage: { ...thread.lastMessage!, text, encryptedPayload: null } };
+        } catch {
+          return { ...thread, lastMessage: { ...thread.lastMessage!, text: '', encryptedPayload: null } };
+        }
+      }),
+    );
+  }
+
   async function refreshThreads(overrideThreadId?: string) {
     const response = await api.get('/api/chat/threads');
-    const nextThreads = response.data.threads || [];
+    const rawThreads = response.data.threads || [];
+    const nextThreads = await decryptThreadPreviews(rawThreads);
     setThreads(nextThreads);
     socketRef.current?.emit('threads:join-all');
-    // Prefer explicit override (from URL param) then first thread if nothing active.
+    // Prefer explicit override (from URL param); do not auto-select first thread.
     const target = overrideThreadId || searchParams.get('thread') || '';
     if (target && nextThreads.some((t: ChatThread) => t.id === target)) {
       setActiveThreadId(target);
-    } else if (!activeThreadId && !target && nextThreads[0]?.id) {
-      setActiveThreadId(nextThreads[0].id);
     }
   }
 
@@ -512,7 +534,7 @@ function ChatPage() {
       const user = response.data.user || null;
       setSearchedUser(user);
       if (!user) {
-        setStatus({ type: 'error', message: response.data.message || 'No active customer found for that email.' });
+        setStatus({ type: 'error', message: response.data.message || 'No active user found for that email.' });
         return;
       }
       if (!user.publicKey) {
@@ -565,6 +587,7 @@ function ChatPage() {
       setFirstMessageInput('');
       setSearchedUser(null);
       setRequestEmail('');
+      setShowNewChat(false);
       setStatus({ type: 'success', message: 'Chat request sent. Waiting for recipient approval.' });
       await refreshRequests();
     } catch (error: unknown) {
@@ -710,7 +733,7 @@ function ChatPage() {
       <aside className="chat-sidebar card">
         <section className="chat-sidebar-section">
           <div className="chat-sidebar-heading">
-            <h3>Chats</h3>
+            <h3>Recent Chats</h3>
             <span>{threads.length}</span>
           </div>
           <div className="thread-list">
@@ -721,61 +744,27 @@ function ChatPage() {
                 <button
                   key={thread.id}
                   type="button"
-                  className={thread.id === activeThreadId ? 'thread-item active' : 'thread-item'}
-                  onClick={() => setActiveThreadId(thread.id)}
+                  className={thread.id === activeThreadId && !showNewChat ? 'thread-item active' : 'thread-item'}
+                  onClick={() => { setActiveThreadId(thread.id); setShowNewChat(false); }}
                 >
-                  <strong>{thread.threadType === 'group' ? (thread.name || 'Group thread') : (peer?.username || 'Direct thread')}</strong>
-                  <span>{thread.lastMessage?.text || 'No messages yet'}</span>
+                  <span className={thread.threadType === 'group' ? 'thread-avatar thread-avatar-group' : 'thread-avatar thread-avatar-direct'}>
+                    {thread.threadType === 'group' ? '👥' : '👤'}
+                  </span>
+                  <div className="thread-item-info">
+                    <strong>{thread.threadType === 'group' ? (thread.name || 'Group thread') : (peer?.username || 'Direct thread')}</strong>
+                    <span>{thread.lastMessage?.text || 'No messages yet'}</span>
+                  </div>
                 </button>
               );
             })}
           </div>
         </section>
 
-        <section className="chat-sidebar-section">
-          <div className="chat-sidebar-heading">
-            <h3>New direct chat</h3>
-          </div>
-          <div className="chat-user-list compact">
-            <div className="chat-search-row">
-              <input value={requestEmail} onChange={(event) => setRequestEmail(event.target.value)} placeholder="Customer email" />
-              <button type="button" className="secondary" onClick={searchByEmail} disabled={!requestEmail.trim()}>
-                Search
-              </button>
-            </div>
-            {searchedUser && (
-              <div className="request-preview">
-                <p>{searchedUser.username} ({searchedUser.email})</p>
-                {!searchedUser.publicKey && (
-                  <p className="status warn">
-                    This user needs to sign in once before you can send an encrypted request.
-                  </p>
-                )}
-                <textarea
-                  value={firstMessageInput}
-                  onChange={(event) => setFirstMessageInput(event.target.value)}
-                  placeholder="First message"
-                  rows={3}
-                  disabled={!searchedUser.publicKey}
-                />
-                <button
-                  type="button"
-                  className="submit"
-                  onClick={sendFirstRequest}
-                  disabled={requesting || !firstMessageInput.trim() || !searchedUser.publicKey}
-                >
-                  {requesting ? 'Sending...' : 'Send request'}
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {(incomingRequests.length > 0 || outgoingRequests.length > 0) && (
+        {(incomingRequests.length > 0 || outgoingRequests.some((r) => r.status !== 'accepted')) && (
           <section className="chat-sidebar-section">
             <div className="chat-sidebar-heading">
               <h3>Requests</h3>
-              <span>{incomingRequests.length + outgoingRequests.length}</span>
+              <span>{incomingRequests.length + outgoingRequests.filter((r) => r.status !== 'accepted').length}</span>
             </div>
             <div className="thread-list">
               {incomingRequests.map((request) => (
@@ -788,25 +777,116 @@ function ChatPage() {
                   </div>
                 </div>
               ))}
-              {outgoingRequests.map((request) => (
-                <div key={request.id} className="thread-item request-item">
-                  <strong>{request.recipient.username}</strong>
-                  <span>Pending approval</span>
-                </div>
-              ))}
+              {outgoingRequests
+                .filter((r) => r.status !== 'accepted')
+                .map((request) => (
+                  <div key={request.id} className="thread-item request-item">
+                    <strong>{request.recipient.username}</strong>
+                    <span className={`request-status-badge request-status-${request.status}`}>
+                      {request.status === 'pending' ? 'Pending approval' : 'Request rejected'}
+                    </span>
+                  </div>
+                ))}
             </div>
           </section>
         )}
+
       </aside>
 
       <main className="chat-main card">
-        {!activeThread ? (
-          <p className="status">No active chat selected yet. Accept a request or wait for acceptance.</p>
+        {showNewChat ? (
+          <>
+            <header className="chat-header">
+              <div>
+                <h3>New Direct Chat</h3>
+                <p className="brand-kicker">Search for a user and send your first encrypted message</p>
+              </div>
+              <button
+                type="button"
+                className="secondary chat-new-cancel"
+                onClick={() => { setShowNewChat(false); setSearchedUser(null); setRequestEmail(''); setFirstMessageInput(''); }}
+              >
+                ✕ Cancel
+              </button>
+            </header>
+
+            <div className="chat-new-form">
+              {status.message && <p className={`status ${status.type}`}>{status.message}</p>}
+              <div className="chat-search-row">
+                <input
+                  value={requestEmail}
+                  onChange={(event) => setRequestEmail(event.target.value)}
+                  placeholder="Enter user email address"
+                  onKeyDown={(e) => { if (e.key === 'Enter') searchByEmail(); }}
+                />
+                <button type="button" className="secondary" onClick={searchByEmail} disabled={!requestEmail.trim()}>
+                  Search
+                </button>
+              </div>
+
+              {searchedUser && (() => {
+                const existingOutgoing = outgoingRequests.find(
+                  (req) => String(req.recipient.id) === String(searchedUser.id),
+                );
+                const isPending = existingOutgoing?.status === 'pending';
+                const isBlocked =
+                  existingOutgoing?.status === 'rejected' && existingOutgoing.lockAfterRejection;
+                const wasRejected =
+                  existingOutgoing?.status === 'rejected' && !existingOutgoing.lockAfterRejection;
+                const canSend = !isPending && !isBlocked && !!searchedUser.publicKey;
+
+                return (
+                  <div className="request-preview">
+                    <p><strong>{searchedUser.username}</strong> — {searchedUser.email}</p>
+                    {!searchedUser.publicKey && (
+                      <p className="status warn">This user needs to sign in once before you can send an encrypted request.</p>
+                    )}
+                    {isPending && (
+                      <p className="status warn">Request already sent — waiting for {searchedUser.username} to accept.</p>
+                    )}
+                    {isBlocked && (
+                      <p className="status error">{searchedUser.username} rejected your request. You cannot message this user again.</p>
+                    )}
+                    {wasRejected && (
+                      <p className="status warn">Your previous request was rejected. You may send a new one.</p>
+                    )}
+                    <textarea
+                      value={firstMessageInput}
+                      onChange={(event) => setFirstMessageInput(event.target.value)}
+                      placeholder="Write your first message…"
+                      rows={4}
+                      disabled={!canSend}
+                    />
+                    <button
+                      type="button"
+                      className="submit"
+                      onClick={sendFirstRequest}
+                      disabled={requesting || !firstMessageInput.trim() || !canSend}
+                    >
+                      {requesting ? 'Sending...' : 'Send chat request'}
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          </>
+        ) : !activeThread ? (
+          <div className="chat-landing">
+            <div className="chat-landing-icon">💬</div>
+            <h3>Secure Conversations</h3>
+            <p>Select a chat from the sidebar or start a new end-to-end encrypted conversation.</p>
+            <button
+              type="button"
+              className="chat-landing-btn"
+              onClick={() => { setShowNewChat(true); setStatus({ type: '', message: '' }); setSearchedUser(null); setRequestEmail(''); setFirstMessageInput(''); }}
+            >
+              + Create New Chat
+            </button>
+          </div>
         ) : (
           <>
             <header className="chat-header">
               <div>
-                <p className="brand-kicker">True end-to-end encrypted chat</p>
                 <h3>
                   {activeThread.threadType === 'group'
                     ? (activeThread.name || 'Encrypted Group')

@@ -2,6 +2,7 @@
 
 :root {
   --bg: #f4f7f9;
+  --surface: #ffffff;
   --ink: #17324a;
   --ink-soft: #486179;
   --ink-subtle: #6b8197;
@@ -24,6 +25,7 @@
 
 :root[data-theme='dark'] {
   --bg: #07111a;
+  --surface: #0e1f30;
   --ink: #f4f7fa;
   --ink-soft: #cbd5e1;
   --ink-subtle: #94a3b8;

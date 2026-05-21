@@ -424,7 +424,7 @@ async function createGroupThread({ creatorId, participantIds = [], participantKe
   const normalizedIds = [creator, ...invitedIds];
 
   if (normalizedIds.length < 3) {
-    throw createError('A group chat requires the creator plus at least two invited customers', 400);
+    throw createError('A group chat requires the creator plus at least two invited users', 400);
   }
 
   const users = await User.find({
@@ -674,6 +674,7 @@ async function listThreadsForUser(userId) {
         id: thread._id,
         threadType: thread.threadType,
         name: thread.name || null,
+        createdBy: thread.createdBy ? String(thread.createdBy) : null,
         participants: (thread.participantIds || []).map((participant) => ({
           id: participant._id,
           username: participant.username,
@@ -689,7 +690,13 @@ async function listThreadsForUser(userId) {
           ? {
               id: lastMessage._id,
               senderName: lastMessage.sender?.username || 'Unknown',
-              text: '[Encrypted message]',
+              text: '',
+              encryptedPayload: {
+                ciphertext: lastMessage.ciphertext,
+                iv: lastMessage.iv,
+                authTag: lastMessage.authTag,
+                algorithm: lastMessage.algorithm || 'aes-256-gcm',
+              },
               createdAt: lastMessage.createdAt,
             }
           : null,
@@ -911,7 +918,7 @@ async function searchCustomerByEmail(email, requesterId) {
     .lean();
 
   if (!user) {
-    const error = new Error('Customer user not found');
+    const error = new Error('User not found');
     error.statusCode = 404;
     throw error;
   }
@@ -924,6 +931,34 @@ async function searchCustomerByEmail(email, requesterId) {
     publicKey: user.publicKey,
     keyExchangePublicKey: user.keyExchangePublicKey || null,
   };
+}
+
+async function listAcceptedFriends(userId) {
+  const requests = await ChatRequest.find({
+    $or: [{ requesterId: userId }, { recipientId: userId }],
+    status: 'accepted',
+  })
+    .populate('requesterId', 'username email publicKey keyExchangePublicKey')
+    .populate('recipientId', 'username email publicKey keyExchangePublicKey')
+    .lean();
+
+  return requests
+    .map((request) => {
+      const isRequester = isSameId(
+        request.requesterId?._id || request.requesterId,
+        userId,
+      );
+      const contact = isRequester ? request.recipientId : request.requesterId;
+      if (!contact) return null;
+      return {
+        id: String(contact._id),
+        username: contact.username,
+        email: contact.email,
+        publicKey: contact.publicKey || null,
+        keyExchangePublicKey: contact.keyExchangePublicKey || null,
+      };
+    })
+    .filter(Boolean);
 }
 
 async function listIncomingRequests(userId) {
@@ -1138,6 +1173,7 @@ module.exports = {
   searchCustomerByEmail,
   listIncomingRequests,
   listOutgoingRequests,
+  listAcceptedFriends,
   createChatRequest,
   acceptChatRequest,
   rejectChatRequest,

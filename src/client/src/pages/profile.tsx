@@ -81,7 +81,7 @@ function Accordion({ id, label, icon, open, onToggle, children, badge }: Accordi
 }
 
 /* ─── Page ──────────────────────────────────────────────────── */
-function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void }) {
+function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme: string) => void; initialSection?: string | null }) {
   const api = useMemo(() => createApiClient(), []);
   const location = useLocation();
 
@@ -118,7 +118,7 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
     phoneNumber: '',
   });
 
-  const [openSection, setOpenSection] = useState<string | null>(null);
+  const [openSection, setOpenSection] = useState<string | null>(initialSection ?? null);
 
   const storedUser = useMemo(() => {
     const raw = localStorage.getItem('secureChatUser');
@@ -167,6 +167,11 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
     if (!requestedSection) return;
     setOpenSection(requestedSection);
   }, [location.state]);
+
+  // Sync when the drawer re-opens to a different section without unmounting.
+  useEffect(() => {
+    if (initialSection !== undefined) setOpenSection(initialSection ?? null);
+  }, [initialSection]);
 
   function toggle(id: string) {
     setOpenSection((prev) => (prev === id ? null : id));
@@ -239,6 +244,9 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setProfile(res.data.profile);
+      window.dispatchEvent(new CustomEvent('securechat-profile-pic-changed', {
+        detail: normalizeProfilePictureUrl(res.data.profile?.profilePictureUrl) || null,
+      }));
       setStatus({ type: 'success', message: 'Picture updated.' });
     } catch (err: unknown) {
       const e = err as AxiosError<{ message?: string }>;
@@ -260,6 +268,7 @@ function ProfilePage({ onThemeChange }: { onThemeChange: (theme: string) => void
     try {
       const res = await api.delete('/api/profile/picture');
       setProfile(res.data.profile);
+      window.dispatchEvent(new CustomEvent('securechat-profile-pic-changed', { detail: null }));
       setStatus({ type: 'success', message: 'Picture removed.' });
     } catch (err: unknown) {
       const e = err as AxiosError<{ message?: string }>;

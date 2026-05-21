@@ -20,6 +20,7 @@ const {
   searchCustomerByEmail,
   listIncomingRequests,
   listOutgoingRequests,
+  listAcceptedFriends,
   createChatRequest,
   acceptChatRequest,
   rejectChatRequest,
@@ -69,6 +70,16 @@ function emitGroupInvitations(io, { invitedUserIds = [], threadId, groupName, in
 }
 
 router.use(protect);
+
+router.get('/friends', async (req, res, next) => {
+  try {
+    const friends = await listAcceptedFriends(req.user._id);
+    res.json({ friends });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
 
 router.get('/users', async (req, res, next) => {
   try {

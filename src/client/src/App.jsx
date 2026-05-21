@@ -3,10 +3,11 @@ import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'reac
 import { io } from 'socket.io-client'
 import AdminDashboardPage from './pages/admin'
 import ChatPage from './pages/chat'
-import ContactsPage from './pages/contacts'
+import FriendsPage from './pages/friends'
 import CustomerDashboardPage from './pages/dashboard'
 import GroupsPage from './pages/groups'
 import LoginPage from './pages/login'
+import NotificationsPage from './pages/notifications'
 import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
 import { createApiClient } from './lib/api'
@@ -19,11 +20,40 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('secureChatTheme') || 'light')
   const [token, setToken] = useState(() => localStorage.getItem('secureChatToken'))
   const [navOpen, setNavOpen] = useState(false)
-  const [groupInviteNotice, setGroupInviteNotice] = useState(null)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [profileSection, setProfileSection] = useState(null)
+  const [profilePicUrl, setProfilePicUrl] = useState(null)
+  const [groupInviteCount, setGroupInviteCount] = useState(0)
+  const [chatUnreadCount, setChatUnreadCount] = useState(0)
   const notificationSocketRef = useRef(null)
+  const locationRef = useRef(location)
+  const userMenuRef = useRef(null)
   const storedUser = localStorage.getItem('secureChatUser')
   const currentUser = storedUser ? JSON.parse(storedUser) : null
   const isAdmin = currentUser?.role === 'admin'
+
+  // Keep locationRef current so socket callbacks have access without stale closures.
+  useEffect(() => { locationRef.current = location }, [location])
+
+  // Close user-menu dropdown on outside click.
+  useEffect(() => {
+    function onClickOutside(event) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setUserMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
+
+  // Reset notification counts on navigation.
+  useEffect(() => {
+    if (location.pathname.startsWith('/chat')) setChatUnreadCount(0)
+    if (location.pathname.startsWith('/notifications') || location.pathname.startsWith('/groups')) {
+      setGroupInviteCount(0)
+    }
+  }, [location.pathname])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -42,6 +72,23 @@ function App() {
       window.removeEventListener('securechat-auth-changed', handleAuthChanged)
       window.removeEventListener('storage', handleAuthChanged)
     }
+  }, [])
+
+  // Fetch the user's profile picture URL whenever they log in/out.
+  useEffect(() => {
+    if (!token) { setProfilePicUrl(null); return }
+    const api = createApiClient()
+    api.get('/api/profile').then(res => {
+      const raw = res.data?.profile?.profilePictureUrl || null
+      setProfilePicUrl(raw)
+    }).catch(() => {})
+  }, [token])
+
+  // Sync profile picture updates that happen on the Profile page.
+  useEffect(() => {
+    function onPicChanged(e) { setProfilePicUrl(e.detail || null) }
+    window.addEventListener('securechat-profile-pic-changed', onPicChanged)
+    return () => window.removeEventListener('securechat-profile-pic-changed', onPicChanged)
   }, [])
 
   // After login, eagerly generate the user's E2EE identity and publish their
@@ -96,11 +143,17 @@ function App() {
       const notice = {
         threadId: payload?.threadId || payload?.group?.id || '',
         groupName: payload?.group?.name || 'Encrypted group',
-        inviterName: payload?.invitedBy?.username || 'A customer',
+        inviterName: payload?.invitedBy?.username || 'A user',
         invitedAt: payload?.invitedAt || new Date().toISOString(),
       }
-      setGroupInviteNotice(notice)
+      setGroupInviteCount((prev) => prev + 1)
       window.dispatchEvent(new CustomEvent('securechat-group-invitation', { detail: notice }))
+    })
+
+    socket.on('chat:message:new', () => {
+      if (!locationRef.current.pathname.startsWith('/chat')) {
+        setChatUnreadCount((prev) => prev + 1)
+      }
     })
 
     return () => {
@@ -117,6 +170,14 @@ function App() {
     window.dispatchEvent(new Event('securechat-auth-changed'))
     navigate('/login', { replace: true })
     setNavOpen(false)
+    setUserMenuOpen(false)
+  }
+
+  function openProfileAt(section) {
+    setProfileSection(section)
+    setProfileOpen(true)
+    setUserMenuOpen(false)
+    setNavOpen(false)
   }
 
   if (token) {
@@ -125,24 +186,14 @@ function App() {
         {!location.pathname.startsWith('/admin') && (
           <header className="app-navbar">
             <div className="navbar-inner">
-              <div className="app-navbar-brand">
+              <NavLink to="/chat" className="app-navbar-brand" onClick={() => setNavOpen(false)}>
                 <img src="/scslogo.png" alt="Shadow Link" className="navbar-logo" />
                 <span className="navbar-brand-name">Shadow Link</span>
-              </div>
+              </NavLink>
               <nav className={`app-navbar-links${navOpen ? ' open' : ''}`} aria-label="Main navigation">
                 {!isAdmin && (
-                  <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Dashboard
-                  </NavLink>
-                )}
-                {!isAdmin && (
-                  <NavLink to="/contacts" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Contacts
-                  </NavLink>
-                )}
-                {!isAdmin && (
-                  <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Chat
+                  <NavLink to="/friends" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Friends
                   </NavLink>
                 )}
                 {!isAdmin && (
@@ -150,9 +201,18 @@ function App() {
                     Groups
                   </NavLink>
                 )}
-                <NavLink to="/profile" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                  Profile
-                </NavLink>
+                {!isAdmin && (
+                  <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Chat
+                    {chatUnreadCount > 0 && <span className="nav-badge">{chatUnreadCount > 99 ? '99+' : chatUnreadCount}</span>}
+                  </NavLink>
+                )}
+                {!isAdmin && (
+                  <NavLink to="/notifications" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => { setNavOpen(false); setGroupInviteCount(0); }}>
+                    Notifications
+                    {groupInviteCount > 0 && <span className="nav-badge">{groupInviteCount > 99 ? '99+' : groupInviteCount}</span>}
+                  </NavLink>
+                )}
                 {isAdmin && (
                   <NavLink to="/admin" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
                     Admin
@@ -160,10 +220,74 @@ function App() {
                 )}
               </nav>
               <div className="app-navbar-end">
-                <span className="navbar-user">{currentUser?.username}</span>
-                <button type="button" className="sign-out-btn" onClick={handleSignOut}>
-                  Sign out
-                </button>
+                <div className="user-menu-wrap" ref={userMenuRef}>
+                  <button
+                    type="button"
+                    className={`user-menu-btn${userMenuOpen ? ' open' : ''}`}
+                    aria-haspopup="menu"
+                    aria-expanded={userMenuOpen}
+                    aria-label="User menu"
+                    onClick={() => setUserMenuOpen((v) => !v)}
+                  >
+                    <span className="user-menu-avatar">
+                      {profilePicUrl
+                        ? <img src={profilePicUrl} alt="" className="user-menu-avatar-img" />
+                        : (currentUser?.username?.[0]?.toUpperCase() || '?')
+                      }
+                    </span>
+                  </button>
+                  {userMenuOpen && (
+                    <div className="user-menu-dropdown" role="menu" aria-label="User menu">
+                      <div className="user-menu-header">
+                        <div className="user-menu-header-avatar">
+                          {profilePicUrl
+                            ? <img src={profilePicUrl} alt="" className="user-menu-avatar-img" />
+                            : (currentUser?.username?.[0]?.toUpperCase() || '?')
+                          }
+                        </div>
+                        <div className="user-menu-header-info">
+                          <span className="user-menu-header-name">{currentUser?.username}</span>
+                          <span className="user-menu-header-email">{currentUser?.email}</span>
+                        </div>
+                      </div>
+                      <div className="user-menu-divider" />
+                      <button type="button" className="user-menu-item" role="menuitem" onClick={() => openProfileAt('picture')}>
+                        <span aria-hidden="true" className="user-menu-icon">🖼</span>
+                        Profile picture
+                      </button>
+                      {!isAdmin && (
+                        <button type="button" className="user-menu-item" role="menuitem" onClick={() => openProfileAt('details')}>
+                          <span aria-hidden="true" className="user-menu-icon">📋</span>
+                          Personal details
+                        </button>
+                      )}
+                      {!isAdmin && (
+                        <button type="button" className="user-menu-item" role="menuitem" onClick={() => openProfileAt('appearance')}>
+                          <span aria-hidden="true" className="user-menu-icon">🎨</span>
+                          Appearance
+                        </button>
+                      )}
+                      <button type="button" className="user-menu-item" role="menuitem" onClick={() => openProfileAt('phone')}>
+                        <span aria-hidden="true" className="user-menu-icon">📱</span>
+                        Phone number
+                      </button>
+                      <button type="button" className="user-menu-item" role="menuitem" onClick={() => openProfileAt('security')}>
+                        <span aria-hidden="true" className="user-menu-icon">🔐</span>
+                        Security &amp; Password
+                      </button>
+                      <div className="user-menu-divider" />
+                      <button
+                        type="button"
+                        className="user-menu-item user-menu-item--danger"
+                        role="menuitem"
+                        onClick={handleSignOut}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        Sign out
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   className={`navbar-burger${navOpen ? ' active' : ''}`}
@@ -177,38 +301,71 @@ function App() {
             </div>
           </header>
         )}
-        {groupInviteNotice && !isAdmin && (
+        {groupInviteCount > 0 && !isAdmin && (
           <div className="group-invite-toast" role="status" aria-live="polite">
             <div>
               <strong>New group invitation</strong>
-              <span>{groupInviteNotice.inviterName} invited you to {groupInviteNotice.groupName}.</span>
+              <span>You have {groupInviteCount} pending group invitation{groupInviteCount !== 1 ? 's' : ''}.</span>
             </div>
             <button
               type="button"
               className="secondary"
               onClick={() => {
-                setGroupInviteNotice(null)
-                navigate('/groups')
+                setGroupInviteCount(0)
+                navigate('/notifications')
               }}
             >
               View
             </button>
-            <button type="button" className="toast-dismiss" aria-label="Dismiss invitation notice" onClick={() => setGroupInviteNotice(null)}>
+            <button type="button" className="toast-dismiss" aria-label="Dismiss invitation notice" onClick={() => setGroupInviteCount(0)}>
               x
             </button>
           </div>
         )}
+        {profileOpen && (
+          <>
+            <div
+              className="profile-drawer-overlay"
+              onClick={() => setProfileOpen(false)}
+              aria-hidden="true"
+            />
+            <aside
+              className="profile-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Profile & Settings"
+            >
+              <div className="profile-drawer-head">
+                <span className="profile-drawer-title">Profile &amp; Settings</span>
+                <button
+                  type="button"
+                  className="profile-drawer-close"
+                  aria-label="Close profile settings"
+                  onClick={() => setProfileOpen(false)}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+              <div className="profile-drawer-body">
+                <ProfilePage onThemeChange={setTheme} initialSection={profileSection} />
+              </div>
+            </aside>
+          </>
+        )}
         <div className="app-page">
           <Routes>
             <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
-            <Route path="/contacts" element={isAdmin ? <Navigate to="/admin" replace /> : <ContactsPage />} />
+            <Route path="/friends" element={isAdmin ? <Navigate to="/admin" replace /> : <FriendsPage />} />
             <Route path="/groups" element={isAdmin ? <Navigate to="/admin" replace /> : <GroupsPage />} />
+            <Route path="/notifications" element={isAdmin ? <Navigate to="/admin" replace /> : <NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
             <Route path="/chat" element={isAdmin ? <Navigate to="/admin" replace /> : <ChatPage />} />
-            <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/dashboard" replace />} />
-            <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
-            <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
-            <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
+            <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/chat" replace />} />
+            <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
+            <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
+            <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
           </Routes>
         </div>
       </main>

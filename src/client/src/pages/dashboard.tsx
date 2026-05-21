@@ -108,8 +108,8 @@ function CustomerDashboardPage() {
           <button type="button" className="dash-cta" onClick={() => navigate('/chat')}>
             <span className="dash-cta-icon">💬</span>Open chat
           </button>
-          <button type="button" className="dash-cta secondary" onClick={() => navigate('/contacts')}>
-            <span className="dash-cta-icon">👥</span>Contacts
+          <button type="button" className="dash-cta secondary" onClick={() => navigate('/friends')}>
+            <span className="dash-cta-icon">👥</span>Friends
           </button>
           <button type="button" className="dash-cta secondary" onClick={loadDashboard} aria-label="Refresh dashboard">
             <span className="dash-cta-icon">↻</span>Refresh

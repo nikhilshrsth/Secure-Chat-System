@@ -20,6 +20,7 @@ type ChatThread = {
   id: string;
   threadType: string;
   name?: string | null;
+  createdBy?: string | null;
   participants: ThreadParticipant[];
   lastActivityAt: string;
   messageCount: number;
@@ -85,6 +86,8 @@ function GroupsPage() {
   const [groupInvitations, setGroupInvitations] = useState<GroupInvitation[]>([]);
   const [availableUsers, setAvailableUsers] = useState<ChatUser[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [manageName, setManageName] = useState('');
   const [groupName, setGroupName] = useState('');
   const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>([]);
@@ -94,7 +97,7 @@ function GroupsPage() {
   const [decidingInviteId, setDecidingInviteId] = useState('');
   const [status, setStatus] = useState({ type: '', message: '' });
 
-  const selectedGroup = groups.find((group) => group.id === selectedGroupId) || groups[0] || null;
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId) || null;
 
   async function refreshGroups(nextSelectedId?: string) {
     const response = await api.get('/api/chat/threads');
@@ -108,12 +111,15 @@ function GroupsPage() {
       return;
     }
 
-    setSelectedGroupId(nextGroups[0]?.id || '');
+    // Only auto-select if we already had an explicit selection (e.g. after rename/delete)
+    if (selectedGroupId) {
+      setSelectedGroupId(nextGroups[0]?.id || '');
+    }
   }
 
   async function refreshUsers() {
-    const response = await api.get('/api/chat/users');
-    const normalizedUsers = ((response.data.users || []) as RawChatUser[])
+    const response = await api.get('/api/chat/friends');
+    const normalizedUsers = ((response.data.friends || []) as RawChatUser[])
       .map((user) => ({
         id: String(user.id || user._id || ''),
         username: user.username,
@@ -172,7 +178,7 @@ function GroupsPage() {
 
   async function createGroup() {
     if (groupParticipantIds.length < 2) {
-      setStatus({ type: 'warn', message: 'Select at least two customers to create a group.' });
+      setStatus({ type: 'warn', message: 'Select at least two users to create a group.' });
       return;
     }
 
@@ -198,7 +204,7 @@ function GroupsPage() {
       ];
 
       if (participants.some((participant) => !participant.publicKey)) {
-        throw new Error('One or more selected customers have not activated secure chat yet.');
+        throw new Error('One or more selected users have not activated secure chat yet.');
       }
 
       const participantKeys = await Promise.all(
@@ -222,6 +228,7 @@ function GroupsPage() {
       const threadId = String(response.data?.thread?.id || '');
       setGroupName('');
       setGroupParticipantIds([]);
+      setShowCreateForm(false);
       setStatus({ type: 'success', message: 'Encrypted group created and invitations sent.' });
       await refreshGroups(threadId || undefined);
     } catch (error: unknown) {
@@ -297,29 +304,19 @@ function GroupsPage() {
 
   return (
     <section className="groups-shell">
-      <header className="groups-header card">
-        <div>
-          <p className="brand-kicker">End-to-end encrypted</p>
-          <h2>Groups</h2>
-          <p>View existing encrypted group chats, manage names, and create new groups.</p>
-        </div>
-        <span className="contacts-count">{groups.length} group{groups.length !== 1 ? 's' : ''}</span>
-      </header>
-
       {status.message && <p className={`status ${status.type}`}>{status.message}</p>}
       {loading && <p className="status">Loading groups...</p>}
 
       {!loading && (
         <div className="groups-layout">
           <aside className="groups-list-panel card">
-            <h3>Existing groups</h3>
             {groupInvitations.length > 0 && (
               <div className="groups-invitations">
                 <h4>Pending invitations</h4>
                 {groupInvitations.map((invitation) => (
                   <div key={invitation.id} className="groups-invitation">
                     <strong>{invitation.group.name || 'Encrypted group'}</strong>
-                    <span>Invited by {invitation.invitedBy.username} - {formatDate(invitation.invitedAt)}</span>
+                    <span>Invited by {invitation.invitedBy.username} · {formatDate(invitation.invitedAt)}</span>
                     <div className="groups-actions compact">
                       <button
                         type="button"
@@ -342,97 +339,142 @@ function GroupsPage() {
                 ))}
               </div>
             )}
-            {groups.length === 0 && <p className="empty-state">No groups yet. Create one to start a shared encrypted chat.</p>}
+            <h3>My Groups</h3>
+            {groups.length === 0 && <p className="empty-state">No groups yet. Create one below.</p>}
             <div className="groups-list">
               {groups.map((group) => (
-                <button
+                <div
                   key={group.id}
-                  type="button"
-                  className={selectedGroup?.id === group.id ? 'group-list-item active' : 'group-list-item'}
-                  onClick={() => setSelectedGroupId(group.id)}
+                  className={showManage && selectedGroup?.id === group.id ? 'group-list-item active' : 'group-list-item'}
                 >
-                  <strong>{groupTitle(group)}</strong>
-                  <span>{group.participants.length} members · {group.messageCount} messages</span>
-                  <span>Last active {formatDate(group.lastActivityAt)}</span>
-                </button>
+                  <button
+                    type="button"
+                    className="group-list-item-body"
+                    onClick={() => navigate(`/chat?thread=${group.id}`)}
+                  >
+                    <strong>{groupTitle(group)}</strong>
+                    <span>{group.participants.length} members · {group.messageCount} msg{group.messageCount !== 1 ? 's' : ''}</span>
+                    <span>Last active {formatDate(group.lastActivityAt)}</span>
+                  </button>
+                  {String(group.createdBy) === String(currentUser?.id) && (
+                    <button
+                      type="button"
+                      className="group-settings-btn"
+                      title="Manage group"
+                      onClick={() => { setSelectedGroupId(group.id); setShowManage(true); setShowCreateForm(false); }}
+                    >
+                      ⚙
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           </aside>
 
-          <main className="groups-manage-panel card">
-            <h3>Manage group</h3>
-            {!selectedGroup ? (
-              <p className="empty-state">Select a group to view and manage it.</p>
-            ) : (
-              <>
-                <label className="groups-field">
-                  <span>Group name</span>
-                  <input
-                    value={manageName}
-                    onChange={(event) => setManageName(event.target.value)}
-                    placeholder="Group name"
-                    maxLength={120}
-                  />
-                </label>
-                <div className="groups-actions">
-                  <button type="button" className="submit" onClick={saveGroupName} disabled={savingName}>
-                    {savingName ? 'Saving...' : 'Save name'}
-                  </button>
+          {showCreateForm ? (
+            <section className="groups-create-panel card">
+              <div className="groups-create-header">
+                <h3>Create new group</h3>
+                <button
+                  type="button"
+                  className="secondary groups-create-cancel"
+                  onClick={() => setShowCreateForm(false)}
+                >
+                  ✕ Cancel
+                </button>
+              </div>
+              <label className="groups-field">
+                <span>Group name</span>
+                <input
+                  value={groupName}
+                  onChange={(event) => setGroupName(event.target.value)}
+                  placeholder="Optional group name"
+                  maxLength={120}
+                />
+              </label>
+
+              <div className="groups-picker">
+                {availableUsers.length === 0 && (
+                  <p className="empty-state">No friends yet. Accept chat requests to add friends you can invite to a group.</p>
+                )}
+                {availableUsers.map((user) => {
+                  const disabled = !user.publicKey;
+                  return (
+                    <label key={user.id} className={disabled ? 'groups-picker-item disabled' : 'groups-picker-item'}>
+                      <input
+                        type="checkbox"
+                        checked={groupParticipantIds.includes(user.id)}
+                        disabled={disabled}
+                        onChange={(event) => toggleParticipant(user.id, event.target.checked)}
+                      />
+                      <span>
+                        <strong>{user.username}</strong>
+                        <small>{user.email}</small>
+                        {disabled && <small>Secure chat key not published yet</small>}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <button type="button" className="submit" onClick={createGroup} disabled={creating}>
+                {creating ? 'Creating...' : 'Create group'}
+              </button>
+            </section>
+          ) : showManage && selectedGroup ? (
+            <main className="groups-manage-panel card">
+              <div className="groups-manage-header">
+                <div className="groups-manage-title">
+                  <h3>{groupTitle(selectedGroup)}</h3>
+                  <span className="groups-admin-badge">Admin</span>
+                </div>
+                <div className="groups-manage-actions">
                   <button type="button" className="secondary" onClick={() => navigate(`/chat?thread=${selectedGroup.id}`)}>
                     Open chat
                   </button>
+                  <button type="button" className="secondary groups-create-cancel" onClick={() => setShowManage(false)}>
+                    ✕
+                  </button>
                 </div>
-
-                <div className="groups-members">
-                  <h4>Members</h4>
-                  {selectedGroup.participants.map((participant) => (
-                    <div key={participant.id} className="groups-member">
-                      <strong>{participant.username}{String(participant.id) === String(currentUser?.id) ? ' (you)' : ''}</strong>
-                      <span>{participant.email}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </main>
-
-          <section className="groups-create-panel card">
-            <h3>Create new group</h3>
-            <label className="groups-field">
-              <span>Group name</span>
-              <input
-                value={groupName}
-                onChange={(event) => setGroupName(event.target.value)}
-                placeholder="Optional group name"
-                maxLength={120}
-              />
-            </label>
-
-            <div className="groups-picker">
-              {availableUsers.map((user) => {
-                const disabled = !user.publicKey;
-                return (
-                  <label key={user.id} className={disabled ? 'groups-picker-item disabled' : 'groups-picker-item'}>
-                    <input
-                      type="checkbox"
-                      checked={groupParticipantIds.includes(user.id)}
-                      disabled={disabled}
-                      onChange={(event) => toggleParticipant(user.id, event.target.checked)}
-                    />
-                    <span>
-                      <strong>{user.username}</strong>
-                      <small>{user.email}</small>
-                      {disabled && <small>Secure chat key not published yet</small>}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-
-            <button type="button" className="submit" onClick={createGroup} disabled={creating}>
-              {creating ? 'Creating...' : 'Create group invitations'}
-            </button>
-          </section>
+              </div>
+              <label className="groups-field">
+                <span>Group name</span>
+                <input
+                  value={manageName}
+                  onChange={(event) => setManageName(event.target.value)}
+                  placeholder="Group name"
+                  maxLength={120}
+                />
+              </label>
+              <div className="groups-actions">
+                <button type="button" className="submit" onClick={saveGroupName} disabled={savingName}>
+                  {savingName ? 'Saving...' : 'Save name'}
+                </button>
+              </div>
+              <div className="groups-members">
+                <h4>Members</h4>
+                {selectedGroup.participants.map((participant) => (
+                  <div key={participant.id} className="groups-member">
+                    <strong>{participant.username}{String(participant.id) === String(currentUser?.id) ? ' (you)' : ''}</strong>
+                    <span>{participant.email}</span>
+                  </div>
+                ))}
+              </div>
+            </main>
+          ) : (
+            <main className="groups-manage-panel card groups-landing">
+              <div className="groups-landing-icon">🔒</div>
+              <h3>Encrypted Group Chats</h3>
+              <p>Create a group to start a shared end-to-end encrypted conversation with your friends.</p>
+              <button
+                type="button"
+                className="groups-landing-btn"
+                onClick={() => { setShowCreateForm(true); setStatus({ type: '', message: '' }); }}
+              >
+                + Create New Group
+              </button>
+            </main>
+          )}
         </div>
       )}
     </section>

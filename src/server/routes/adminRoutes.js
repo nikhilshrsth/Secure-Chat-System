@@ -34,7 +34,7 @@ function accountStatus(user) {
 }
 
 function displayRole(role) {
-  return role === 'admin' ? 'Admin' : 'Customer';
+  return role === 'admin' ? 'Admin' : 'User';
 }
 
 function mapUserForAdmin(user, failedLoginsToday = 0) {
@@ -102,13 +102,13 @@ async function findCustomerTarget(req, res, next) {
   const user = await User.findById(req.params.userId);
   if (!user) {
     res.status(404);
-    next(new Error('Customer account not found'));
+    next(new Error('User account not found'));
     return null;
   }
 
   if (!isCustomerAccount(user)) {
     res.status(403);
-    next(new Error('Admins can only activate or suspend customer accounts'));
+    next(new Error('Admins can only activate or suspend user accounts'));
     return null;
   }
 
