@@ -5,6 +5,7 @@ const { protect } = require('../middleware/authMiddleware');
 const {
   getOrCreateDirectThread,
   createGroupThread,
+  updateGroupThread,
   listThreadsForUser,
   listMessagesForThread,
   sendMessage,
@@ -203,6 +204,29 @@ router.post('/threads/group', async (req, res, next) => {
     });
 
     res.status(201).json({
+      thread: {
+        id: thread._id,
+        threadType: thread.threadType,
+        name: thread.name || null,
+        participantIds: thread.participantIds,
+        lastActivityAt: thread.lastActivityAt,
+      },
+    });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.put('/threads/:threadId/group', async (req, res, next) => {
+  try {
+    const thread = await updateGroupThread({
+      threadId: req.params.threadId,
+      userId: req.user._id,
+      name: req.body?.name,
+    });
+
+    res.json({
       thread: {
         id: thread._id,
         threadType: thread.threadType,

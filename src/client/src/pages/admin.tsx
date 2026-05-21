@@ -578,7 +578,7 @@ function AdminDashboardPage() {
       <header className="app-navbar admin-navbar">
         <div className="navbar-inner">
           <div className="app-navbar-brand">
-            <img src="/shadow-link-logo.png" alt="Shadow Link" className="navbar-logo" />
+            <img src="/scslogo.png" alt="Shadow Link" className="navbar-logo" />
             <span className="navbar-brand-name">Admin Console</span>
           </div>
 

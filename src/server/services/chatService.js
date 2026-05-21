@@ -339,6 +339,27 @@ async function createGroupThread({ creatorId, participantIds = [], participantKe
   return thread;
 }
 
+async function updateGroupThread({ threadId, userId, name = '' }) {
+  const thread = await ChatThread.findById(threadId);
+
+  if (!thread || thread.status === 'archived' || thread.threadType !== 'group') {
+    const error = new Error('Group chat not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!thread.participantIds.some((id) => isSameId(id, userId))) {
+    const error = new Error('You are not a participant in this group');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  thread.name = String(name || '').trim() || null;
+  await thread.save();
+
+  return thread;
+}
+
 async function listThreadsForUser(userId) {
   const threads = await ChatThread.find({ participantIds: userId, status: { $ne: 'archived' } })
     .sort({ lastActivityAt: -1 })
@@ -764,6 +785,7 @@ async function rejectChatRequest({ requestId, recipientId }) {
 module.exports = {
   getOrCreateDirectThread,
   createGroupThread,
+  updateGroupThread,
   listThreadsForUser,
   listMessagesForThread,
   sendMessage,

@@ -4,6 +4,7 @@ import AdminDashboardPage from './pages/admin'
 import ChatPage from './pages/chat'
 import ContactsPage from './pages/contacts'
 import CustomerDashboardPage from './pages/dashboard'
+import GroupsPage from './pages/groups'
 import LoginPage from './pages/login'
 import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
@@ -78,7 +79,7 @@ function App() {
           <header className="app-navbar">
             <div className="navbar-inner">
               <div className="app-navbar-brand">
-                <img src="/shadow-link-logo.png" alt="Shadow Link" className="navbar-logo" />
+                <img src="/scslogo.png" alt="Shadow Link" className="navbar-logo" />
                 <span className="navbar-brand-name">Shadow Link</span>
               </div>
               <nav className={`app-navbar-links${navOpen ? ' open' : ''}`} aria-label="Main navigation">
@@ -95,6 +96,11 @@ function App() {
                 {!isAdmin && (
                   <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
                     Chat
+                  </NavLink>
+                )}
+                {!isAdmin && (
+                  <NavLink to="/groups" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
+                    Groups
                   </NavLink>
                 )}
                 <NavLink to="/profile" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
@@ -128,6 +134,7 @@ function App() {
           <Routes>
             <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
             <Route path="/contacts" element={isAdmin ? <Navigate to="/admin" replace /> : <ContactsPage />} />
+            <Route path="/groups" element={isAdmin ? <Navigate to="/admin" replace /> : <GroupsPage />} />
             <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
             <Route path="/chat" element={isAdmin ? <Navigate to="/admin" replace /> : <ChatPage />} />
             <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/dashboard" replace />} />

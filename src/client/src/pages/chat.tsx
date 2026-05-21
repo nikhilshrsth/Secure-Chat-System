@@ -84,15 +84,6 @@ type SearchedUser = {
   keyExchangePublicKey?: string | null;
 };
 
-type RawChatUser = {
-  id?: string;
-  _id?: string;
-  username: string;
-  email: string;
-  publicKey?: string | null;
-  keyExchangePublicKey?: string | null;
-};
-
 type IncomingRequest = {
   id: string;
   requester: {
@@ -196,9 +187,6 @@ function ChatPage() {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [requestEmail, setRequestEmail] = useState('');
   const [firstMessageInput, setFirstMessageInput] = useState('');
-  const [groupName, setGroupName] = useState('');
-  const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>([]);
-  const [availableUsers, setAvailableUsers] = useState<SearchedUser[]>([]);
   const [searchedUser, setSearchedUser] = useState<SearchedUser | null>(null);
   const [incomingRequests, setIncomingRequests] = useState<Array<IncomingRequest & { preview: string }>>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<OutgoingRequest[]>([]);
@@ -306,21 +294,6 @@ function ChatPage() {
     } else if (!activeThreadId && !target && nextThreads[0]?.id) {
       setActiveThreadId(nextThreads[0].id);
     }
-  }
-
-  async function refreshUsers() {
-    const response = await api.get('/api/chat/users');
-    const normalizedUsers = ((response.data.users || []) as RawChatUser[])
-      .map((user) => ({
-        id: String(user.id || user._id || ''),
-        username: user.username,
-        email: user.email,
-        publicKey: user.publicKey || null,
-        keyExchangePublicKey: user.keyExchangePublicKey || null,
-      }))
-      .filter((user) => user.id);
-
-    setAvailableUsers(normalizedUsers);
   }
 
   async function refreshRequests() {
@@ -442,7 +415,7 @@ function ChatPage() {
         });
 
         const urlThread = searchParams.get('thread') || '';
-        await Promise.all([refreshThreads(urlThread), refreshRequests(), refreshUsers()]);
+        await Promise.all([refreshThreads(urlThread), refreshRequests()]);
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
         setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load chat.' });
@@ -576,70 +549,6 @@ function ChatPage() {
     }
   }
 
-  async function createGroupChat() {
-    if (groupParticipantIds.length < 2) {
-      setStatus({ type: 'warn', message: 'Select at least two users to create a group chat.' });
-      return;
-    }
-
-    try {
-      const identity = identityRef.current;
-      if (!identity) throw new Error('Encryption identity is not ready');
-
-      const threadKey = await generateThreadKeyRaw();
-      const participants = [
-        {
-          id: currentUser.id,
-          publicKey: identity.publicKey,
-          keyExchangePublicKey: identity.keyExchangePublicKey,
-        },
-        ...availableUsers
-          .filter((user) => groupParticipantIds.includes(String(user.id)))
-          .map((user) => ({
-            id: String(user.id),
-            publicKey: String(user.publicKey || ''),
-            keyExchangePublicKey: user.keyExchangePublicKey || null,
-          })),
-      ];
-
-      if (participants.some((item) => !item.publicKey)) {
-        throw new Error('One or more selected users have not activated secure chat yet.');
-      }
-
-      const participantKeys = await Promise.all(
-        participants.map(async (participant) => ({
-          userId: participant.id,
-          encryptedKey: await encryptThreadKeyForUser(
-            threadKey,
-            participant.publicKey,
-            participant.keyExchangePublicKey,
-            identity,
-          ),
-        })),
-      );
-
-      const response = await api.post('/api/chat/threads/group', {
-        name: groupName,
-        participantIds: groupParticipantIds,
-        participantKeys,
-      });
-
-      const threadId = String(response.data?.thread?.id || '');
-      await refreshThreads(threadId || undefined);
-      if (threadId) {
-        setActiveThreadId(threadId);
-        socketRef.current?.emit('room:join', threadId);
-      }
-
-      setGroupName('');
-      setGroupParticipantIds([]);
-      setStatus({ type: 'success', message: 'Encrypted group chat created.' });
-    } catch (error: unknown) {
-      const axiosError = error as AxiosError<{ message?: string }>;
-      setStatus({ type: 'error', message: axiosError.response?.data?.message || (error as Error).message || 'Unable to create group chat.' });
-    }
-  }
-
   async function acceptIncomingRequest(requestId: string) {
     try {
       const response = await api.post(`/api/chat/requests/${requestId}/accept`);
@@ -757,122 +666,95 @@ function ChatPage() {
   return (
     <section className="chat-shell">
       <aside className="chat-sidebar card">
-        <h3>First Conversation</h3>
-        <div className="chat-user-list">
-          <input value={requestEmail} onChange={(event) => setRequestEmail(event.target.value)} placeholder="Search customer by email" />
-          <button type="button" className="secondary" onClick={searchByEmail} disabled={!requestEmail.trim()}>
-            Search
-          </button>
-          {searchedUser && (
-            <div className="request-preview">
-              <p>{searchedUser.username} ({searchedUser.email})</p>
-              {!searchedUser.publicKey && (
-                <p className="status warn">
-                  This user hasn't activated secure chat yet. Ask them to sign in once so their
-                  device can publish a public key — then you can send your first encrypted request.
-                </p>
-              )}
-              <textarea
-                value={firstMessageInput}
-                onChange={(event) => setFirstMessageInput(event.target.value)}
-                placeholder="Write your first encrypted message"
-                rows={3}
-                disabled={!searchedUser.publicKey}
-              />
-              <button
-                type="button"
-                className="submit"
-                onClick={sendFirstRequest}
-                disabled={requesting || !firstMessageInput.trim() || !searchedUser.publicKey}
-              >
-                {requesting ? 'Sending...' : 'Send request'}
-              </button>
-            </div>
-          )}
-        </div>
-
-        <h3>Incoming Requests</h3>
-        <div className="thread-list">
-          {incomingRequests.length === 0 && <p className="empty-state">No pending requests.</p>}
-          {incomingRequests.map((request) => (
-            <div key={request.id} className="thread-item">
-              <strong>{request.requester.username}</strong>
-              <span>{request.requester.email}</span>
-              <span>{request.preview}</span>
-              <div className="admin-actions">
-                <button onClick={() => acceptIncomingRequest(request.id)}>Accept</button>
-                <button onClick={() => rejectIncomingRequest(request.id)}>Reject</button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <h3>Outgoing Requests</h3>
-        <div className="thread-list">
-          {outgoingRequests.length === 0 && <p className="empty-state">No outgoing requests.</p>}
-          {outgoingRequests.map((request) => (
-            <div key={request.id} className="thread-item">
-              <strong>{request.recipient.username}</strong>
-              <span>{request.recipient.email}</span>
-              <span>Status: {request.status}</span>
-            </div>
-          ))}
-        </div>
-
-        <h3>Create Group</h3>
-        <div className="chat-user-list">
-          <input
-            value={groupName}
-            onChange={(event) => setGroupName(event.target.value)}
-            placeholder="Group name (optional)"
-            maxLength={120}
-          />
+        <section className="chat-sidebar-section">
+          <div className="chat-sidebar-heading">
+            <h3>Chats</h3>
+            <span>{threads.length}</span>
+          </div>
           <div className="thread-list">
-            {availableUsers.map((user) => {
-              const checked = groupParticipantIds.includes(String(user.id));
-              const disabled = !user.publicKey;
+            {threads.length === 0 && <p className="empty-state">No active chats yet.</p>}
+            {threads.map((thread) => {
+              const peer = thread.participants.find((participant) => participant.id !== currentUser?.id);
               return (
-                <label key={user.id} className="thread-item" style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={disabled}
-                    onChange={(event) => {
-                      const next = event.target.checked
-                        ? [...groupParticipantIds, String(user.id)]
-                        : groupParticipantIds.filter((id) => id !== String(user.id));
-                      setGroupParticipantIds(next);
-                    }}
-                  />
-                  <strong>{user.username}</strong>
-                  <span>{user.email}</span>
-                  {disabled && <span className="status warn">Secure chat key not published yet</span>}
-                </label>
+                <button
+                  key={thread.id}
+                  type="button"
+                  className={thread.id === activeThreadId ? 'thread-item active' : 'thread-item'}
+                  onClick={() => setActiveThreadId(thread.id)}
+                >
+                  <strong>{thread.threadType === 'group' ? (thread.name || 'Group thread') : (peer?.username || 'Direct thread')}</strong>
+                  <span>{thread.lastMessage?.text || 'No messages yet'}</span>
+                </button>
               );
             })}
           </div>
-          <button type="button" className="submit" onClick={createGroupChat}>
-            Create encrypted group
-          </button>
-        </div>
+        </section>
 
-        <h3>Active Threads</h3>
-        <div className="thread-list">
-          {threads.map((thread) => {
-            const peer = thread.participants.find((participant) => participant.id !== currentUser?.id);
-            return (
-              <button
-                key={thread.id}
-                type="button"
-                className={thread.id === activeThreadId ? 'thread-item active' : 'thread-item'}
-                onClick={() => setActiveThreadId(thread.id)}
-              >
-                <strong>{thread.threadType === 'group' ? (thread.name || 'Group thread') : (peer?.username || 'Direct thread')}</strong>
-                <span>{thread.lastMessage?.text || 'No messages yet'}</span>
+        <section className="chat-sidebar-section">
+          <div className="chat-sidebar-heading">
+            <h3>New direct chat</h3>
+          </div>
+          <div className="chat-user-list compact">
+            <div className="chat-search-row">
+              <input value={requestEmail} onChange={(event) => setRequestEmail(event.target.value)} placeholder="Customer email" />
+              <button type="button" className="secondary" onClick={searchByEmail} disabled={!requestEmail.trim()}>
+                Search
               </button>
-            );
-          })}
-        </div>
+            </div>
+            {searchedUser && (
+              <div className="request-preview">
+                <p>{searchedUser.username} ({searchedUser.email})</p>
+                {!searchedUser.publicKey && (
+                  <p className="status warn">
+                    This user needs to sign in once before you can send an encrypted request.
+                  </p>
+                )}
+                <textarea
+                  value={firstMessageInput}
+                  onChange={(event) => setFirstMessageInput(event.target.value)}
+                  placeholder="First message"
+                  rows={3}
+                  disabled={!searchedUser.publicKey}
+                />
+                <button
+                  type="button"
+                  className="submit"
+                  onClick={sendFirstRequest}
+                  disabled={requesting || !firstMessageInput.trim() || !searchedUser.publicKey}
+                >
+                  {requesting ? 'Sending...' : 'Send request'}
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {(incomingRequests.length > 0 || outgoingRequests.length > 0) && (
+          <section className="chat-sidebar-section">
+            <div className="chat-sidebar-heading">
+              <h3>Requests</h3>
+              <span>{incomingRequests.length + outgoingRequests.length}</span>
+            </div>
+            <div className="thread-list">
+              {incomingRequests.map((request) => (
+                <div key={request.id} className="thread-item request-item">
+                  <strong>{request.requester.username}</strong>
+                  <span>{request.preview}</span>
+                  <div className="chat-request-actions">
+                    <button onClick={() => acceptIncomingRequest(request.id)}>Accept</button>
+                    <button onClick={() => rejectIncomingRequest(request.id)}>Reject</button>
+                  </div>
+                </div>
+              ))}
+              {outgoingRequests.map((request) => (
+                <div key={request.id} className="thread-item request-item">
+                  <strong>{request.recipient.username}</strong>
+                  <span>Pending approval</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </aside>
 
       <main className="chat-main card">
@@ -925,7 +807,14 @@ function ChatPage() {
             )}
 
             <form className="chat-compose" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+              <input
+                value={messageInput}
+                onChange={(event) => setMessageInput(event.target.value)}
+                placeholder="Write an end-to-end encrypted message"
+                maxLength={2000}
+              />
               <select
+                className="chat-retention-select"
                 value={deleteAfterReadSeconds}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -939,12 +828,6 @@ function ChatPage() {
                 <option value="60">Delete 60s after read</option>
                 <option value="300">Delete 5m after read</option>
               </select>
-              <input
-                value={messageInput}
-                onChange={(event) => setMessageInput(event.target.value)}
-                placeholder="Write an end-to-end encrypted message"
-                maxLength={2000}
-              />
               <button type="submit" className="submit" disabled={sending || !messageInput.trim()}>
                 {sending ? 'Sending...' : 'Send'}
               </button>
