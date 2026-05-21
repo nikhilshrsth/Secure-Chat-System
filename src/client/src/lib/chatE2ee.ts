@@ -78,7 +78,15 @@ async function generateKeyExchangeIdentity(): Promise<Pick<StoredIdentity, 'keyE
 }
 
 export async function getOrCreateIdentity(): Promise<StoredIdentity> {
-  const storedRaw = localStorage.getItem(IDENTITY_STORAGE_KEY);
+  const rawUser = localStorage.getItem('secureChatUser');
+  let userId = '';
+  try {
+    userId = rawUser ? String(JSON.parse(rawUser)?.id || '') : '';
+  } catch (_error) {
+    userId = '';
+  }
+  const storageKey = userId ? `${IDENTITY_STORAGE_KEY}:${userId}` : IDENTITY_STORAGE_KEY;
+  const storedRaw = localStorage.getItem(storageKey) || (userId ? localStorage.getItem(IDENTITY_STORAGE_KEY) : null);
   if (storedRaw) {
     try {
       const parsed = JSON.parse(storedRaw) as Partial<StoredIdentity>;
@@ -88,6 +96,7 @@ export async function getOrCreateIdentity(): Promise<StoredIdentity> {
         && parsed.keyExchangePublicKey
         && parsed.keyExchangePrivateKeyJwk
       ) {
+        localStorage.setItem(storageKey, JSON.stringify(parsed));
         return parsed;
       }
 
@@ -99,16 +108,16 @@ export async function getOrCreateIdentity(): Promise<StoredIdentity> {
           ...keyExchangeIdentity,
         } satisfies StoredIdentity;
 
-        localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(migrated));
+        localStorage.setItem(storageKey, JSON.stringify(migrated));
         return migrated;
       }
     } catch (_error) {
-      localStorage.removeItem(IDENTITY_STORAGE_KEY);
+      localStorage.removeItem(storageKey);
     }
   }
 
   const generated = await generateIdentity();
-  localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(generated));
+  localStorage.setItem(storageKey, JSON.stringify(generated));
   return generated;
 }
 

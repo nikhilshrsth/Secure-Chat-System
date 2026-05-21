@@ -1786,7 +1786,7 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  height: 56px;
+  height: 64px;
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;
@@ -1801,20 +1801,20 @@
   text-decoration: none;
   color: var(--ink);
   flex-shrink: 0;
-  min-height: 36px;
+  min-height: 50px;
 }
 
 .navbar-logo {
-  width: 36px;
-  height: 36px;
+  width: 50px;
+  height: 50px;
   display: block;
-  flex: 0 0 36px;
+  flex: 0 0 50px;
   object-fit: contain;
 }
 
 .navbar-brand-name {
   font-weight: 700;
-  font-size: 0.97rem;
+  font-size: 1.05rem;
   letter-spacing: -0.01em;
   color: var(--ink);
 }
@@ -1828,9 +1828,9 @@
 }
 
 .nav-link {
-  padding: 0.38rem 0.78rem;
+  padding: 0.46rem 0.9rem;
   border-radius: 8px;
-  font-size: 0.88rem;
+  font-size: 0.96rem;
   font-weight: 500;
   color: var(--ink-subtle);
   text-decoration: none;

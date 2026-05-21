@@ -755,6 +755,7 @@ async function acceptChatRequest({ requestId, recipientId, logContext = {} }) {
   return {
     requestId: request._id,
     threadId: thread._id,
+    participantIds: thread.participantIds.map((id) => String(id)),
     initialMessage: sent.payload,
   };
 }

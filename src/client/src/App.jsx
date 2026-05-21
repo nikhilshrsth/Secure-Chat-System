@@ -50,11 +50,21 @@ function App() {
       try {
         const identity = await getOrCreateIdentity()
         if (cancelled) return
+        const latestStoredUser = localStorage.getItem('secureChatUser')
+        const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null
+        if (latestUser?.publicKey && latestUser.publicKey !== identity.publicKey) return
         const api = createApiClient()
         await api.put('/api/chat/keys/public', {
           publicKey: identity.publicKey,
           keyExchangePublicKey: identity.keyExchangePublicKey,
         })
+        if (latestUser) {
+          localStorage.setItem('secureChatUser', JSON.stringify({
+            ...latestUser,
+            publicKey: identity.publicKey,
+            keyExchangePublicKey: identity.keyExchangePublicKey,
+          }))
+        }
       } catch {
         // Non-fatal: chat page will retry on its own bootstrap.
       }

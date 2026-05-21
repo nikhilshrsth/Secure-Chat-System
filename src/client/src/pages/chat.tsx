@@ -213,7 +213,15 @@ function ChatPage() {
     const encryptedKey = String(response.data?.encryptedKey || '');
     if (!encryptedKey) throw new Error('No encrypted key available for this thread');
 
-    const threadKey = await decryptThreadKeyForUser(encryptedKey, identity);
+    let threadKey = '';
+    try {
+      threadKey = await decryptThreadKeyForUser(encryptedKey, identity);
+    } catch (error) {
+      if (currentUser?.publicKey && currentUser.publicKey !== identity.publicKey) {
+        throw new Error('This browser does not have this account encryption key. Sign in from the browser that activated secure chat for this account, or reset the account chat key.');
+      }
+      throw error;
+    }
     threadKeysRef.current.set(threadId, threadKey);
     return threadKey;
   }
@@ -265,7 +273,7 @@ function ChatPage() {
       senderId: rawMessage.senderId,
       senderName: rawMessage.senderName,
       text,
-      isOwn: rawMessage.isOwn,
+      isOwn: String(rawMessage.senderId) === String(currentUser?.id),
       createdAt: rawMessage.createdAt,
       readAt: rawMessage.readAt || null,
       expiresAt: rawMessage.expiresAt || null,
@@ -287,6 +295,7 @@ function ChatPage() {
     const response = await api.get('/api/chat/threads');
     const nextThreads = response.data.threads || [];
     setThreads(nextThreads);
+    socketRef.current?.emit('threads:join-all');
     // Prefer explicit override (from URL param) then first thread if nothing active.
     const target = overrideThreadId || searchParams.get('thread') || '';
     if (target && nextThreads.some((t: ChatThread) => t.id === target)) {
@@ -340,6 +349,11 @@ function ChatPage() {
       : io(socketOptions);
 
     socketRef.current = socket;
+
+    socket.on('connect', () => {
+      socket.emit('threads:join-all');
+      setStatus((prev) => (prev.message === 'Realtime connection failed.' ? { type: '', message: '' } : prev));
+    });
 
     socket.on('connect_error', (error) => {
       setStatus({ type: 'error', message: error.message || 'Realtime connection failed.' });
@@ -409,10 +423,19 @@ function ChatPage() {
       try {
         const identity = await getOrCreateIdentity();
         identityRef.current = identity;
-        await api.put('/api/chat/keys/public', {
-          publicKey: identity.publicKey,
-          keyExchangePublicKey: identity.keyExchangePublicKey,
-        });
+        if (!currentUser?.publicKey || currentUser.publicKey === identity.publicKey) {
+          await api.put('/api/chat/keys/public', {
+            publicKey: identity.publicKey,
+            keyExchangePublicKey: identity.keyExchangePublicKey,
+          });
+          if (currentUser) {
+            localStorage.setItem('secureChatUser', JSON.stringify({
+              ...currentUser,
+              publicKey: identity.publicKey,
+              keyExchangePublicKey: identity.keyExchangePublicKey,
+            }));
+          }
+        }
 
         const urlThread = searchParams.get('thread') || '';
         await Promise.all([refreshThreads(urlThread), refreshRequests()]);
@@ -468,7 +491,7 @@ function ChatPage() {
         );
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
-        setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load messages.' });
+        setStatus({ type: 'error', message: axiosError.response?.data?.message || (error as Error).message || 'Unable to load messages.' });
       }
     }
 

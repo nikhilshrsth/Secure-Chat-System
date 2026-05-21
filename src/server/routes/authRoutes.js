@@ -55,6 +55,8 @@ function mapUserResponse(user) {
     isActive: user.isActive,
     isLocked: Boolean(user.isLocked),
     isTwoFactorEnabled: user.isTwoFactorEnabled,
+    publicKey: user.publicKey || null,
+    keyExchangePublicKey: user.keyExchangePublicKey || null,
   };
 }
 

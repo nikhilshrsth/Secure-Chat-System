@@ -114,8 +114,14 @@ router.post('/requests/:requestId/accept', async (req, res, next) => {
       logContext: getLogContext(req),
     });
 
-    req.app.get('io')?.to(String(result.threadId)).emit('chat:message:new', {
-      threadId: String(result.threadId),
+    const io = req.app.get('io');
+    const threadId = String(result.threadId);
+    (result.participantIds || []).forEach((participantId) => {
+      io?.in(`user:${participantId}`).socketsJoin(threadId);
+    });
+
+    io?.to(threadId).emit('chat:message:new', {
+      threadId,
       message: result.initialMessage,
     });
 

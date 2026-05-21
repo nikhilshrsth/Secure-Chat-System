@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
-const { assertThreadAccess, sendMessage } = require('../services/chatService');
+const { assertThreadAccess, listThreadsForUser, sendMessage } = require('../services/chatService');
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -23,6 +23,18 @@ function extractSocketToken(socket) {
   }
 
   return null;
+}
+
+async function joinUserChatRooms(socket) {
+  const userId = String(socket.user._id);
+  socket.join(`user:${userId}`);
+
+  const threads = await listThreadsForUser(socket.user._id);
+  threads.forEach((thread) => {
+    socket.join(String(thread.id));
+  });
+
+  return threads.length;
 }
 
 function registerSocketHandlers(io) {
@@ -52,7 +64,26 @@ function registerSocketHandlers(io) {
     }
   });
 
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
+    try {
+      await joinUserChatRooms(socket);
+    } catch (_error) {
+      socket.emit('chat:sync:error', { message: 'Unable to join chat rooms' });
+    }
+
+    socket.on('threads:join-all', async (ack) => {
+      try {
+        const roomCount = await joinUserChatRooms(socket);
+        if (typeof ack === 'function') {
+          ack({ ok: true, roomCount });
+        }
+      } catch (error) {
+        if (typeof ack === 'function') {
+          ack({ ok: false, message: error.message || 'Unable to join chat rooms' });
+        }
+      }
+    });
+
     socket.on('room:join', async (roomId, ack) => {
       if (!roomId) {
         if (typeof ack === 'function') {
@@ -88,6 +119,8 @@ function registerSocketHandlers(io) {
             userAgent: socket.handshake.headers?.['user-agent'] || null,
           },
         });
+
+        socket.join(result.threadId);
 
         io.to(result.threadId).emit('chat:message:new', {
           threadId: result.threadId,
