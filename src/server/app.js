@@ -15,7 +15,10 @@ const { requestLogger } = require('./middleware/loggerMiddleware');
 
 const app = express();
 
-const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+const clientUrl = process.env.CLIENT_URL || 'https://localhost:5173';
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  : [clientUrl];
 const uploadsPath = path.join(__dirname, 'uploads');
 const profilePicturesPath = path.join(uploadsPath, 'profile-pictures');
 
@@ -24,7 +27,7 @@ fs.mkdirSync(profilePicturesPath, { recursive: true });
 app.use(helmet());
 app.use(
   cors({
-    origin: clientUrl,
+    origin: corsOrigins,
     credentials: true,
   }),
 );

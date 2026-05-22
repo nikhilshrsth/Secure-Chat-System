@@ -9,13 +9,15 @@ const registerSocketHandlers = require('./sockets');
 const { deleteExpiredEphemeralMessages } = require('./services/chatService');
 
 const PORT = Number(process.env.PORT) || 5000;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  : [process.env.CLIENT_URL || 'https://localhost:5173'];
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: CLIENT_URL,
+    origin: corsOrigins,
     credentials: true,
   },
 });
