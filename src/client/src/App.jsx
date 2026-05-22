@@ -235,6 +235,21 @@ function App() {
                         : (currentUser?.username?.[0]?.toUpperCase() || '?')
                       }
                     </span>
+                    <svg
+                      className="user-menu-chevron"
+                      aria-hidden="true"
+                      viewBox="0 0 20 20"
+                      focusable="false"
+                    >
+                      <path
+                        d="M5.5 7.5 10 12l4.5-4.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="1.8"
+                      />
+                    </svg>
                   </button>
                   {userMenuOpen && (
                     <div className="user-menu-dropdown" role="menu" aria-label="User menu">

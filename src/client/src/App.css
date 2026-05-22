@@ -2131,16 +2131,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  width: 36px;
+  gap: 0.25rem;
+  padding: 2px 0.45rem 2px 2px;
   height: 36px;
   border: 2px solid var(--line);
-  border-radius: 50%;
+  border-radius: 999px;
   background: none;
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .user-menu-btn:hover,
@@ -2154,8 +2154,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 100%;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--accent, #6366f1);
   color: #fff;
@@ -2179,7 +2179,17 @@
 }
 
 .user-menu-chevron {
-  display: none;
+  display: block;
+  width: 15px;
+  height: 15px;
+  color: var(--ink-subtle);
+  flex-shrink: 0;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.user-menu-btn:hover .user-menu-chevron,
+.user-menu-btn.open .user-menu-chevron {
+  color: var(--accent, #6366f1);
 }
 
 .user-menu-btn.open .user-menu-chevron {
