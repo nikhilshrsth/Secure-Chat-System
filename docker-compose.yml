@@ -1,0 +1,50 @@
+services:
+  # ── Backend API + Socket.IO ──────────────────────────────────────────────────
+  server:
+    build:
+      context: ./src/server
+      dockerfile: Dockerfile
+    container_name: securechat-server
+    restart: unless-stopped
+    env_file:
+      - ./src/server/.env          # copy from src/server/.env.example and fill in
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - uploads_data:/app/uploads  # persists uploaded profile pictures
+    networks:
+      - securechat-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── React SPA + Nginx reverse proxy ─────────────────────────────────────────
+  client:
+    build:
+      context: ./src/client
+      dockerfile: Dockerfile
+      args:
+        # These are baked into the JS bundle at build time by Vite.
+        # Supply them via a root-level .env file or export them before running
+        # docker compose up --build.
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-}
+    container_name: securechat-client
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - securechat-net
+
+volumes:
+  uploads_data:
+
+networks:
+  securechat-net:
+    driver: bridge

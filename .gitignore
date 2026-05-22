@@ -1,14 +1,27 @@
+# ── Dependencies ────────────────────────────────────────────────────────────
 node_modules/
+
+# ── Build outputs ────────────────────────────────────────────────────────────
 dist/
 build/
 coverage/
 
+# ── Environment files (never commit real secrets) ────────────────────────────
 .env
 .env.local
 .env.*.local
+# Keep .env.example files — they are safe templates with no real values
+!.env.example
 
+# ── Logs ─────────────────────────────────────────────────────────────────────
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# ── Deployment scripts and generated infra config ────────────────────────────
+# Contains server-specific scripts and generated configs; not needed in source control
+deploy/
+
+# ── OS artefacts ─────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
