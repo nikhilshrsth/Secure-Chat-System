@@ -1549,13 +1549,20 @@
   display: grid;
   gap: 1rem;
   padding: 1rem 0;
-  max-width: 560px;
+  max-width: 720px;
 }
 
 .chat-new-form .chat-search-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  gap: 0.75rem;
+}
+
+.chat-new-form .chat-search-row input {
+  min-height: 48px;
+  padding: 0.8rem 0.95rem;
+  font-size: 1rem;
 }
 
 .chat-new-form .request-preview {
@@ -2092,6 +2099,39 @@
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
+}
+
+.navbar-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-subtle);
+  background: var(--surface);
+  text-decoration: none;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  flex-shrink: 0;
+}
+
+.navbar-icon-btn:hover,
+.navbar-icon-btn.active {
+  background: var(--bg);
+  border-color: var(--accent, #6366f1);
+  color: var(--accent, #6366f1);
+  box-shadow: 0 0 0 3px var(--accent-tint, rgba(99,102,241,0.12));
+}
+
+.nav-badge--floating {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  min-width: 17px;
+  height: 17px;
+  border: 2px solid var(--surface);
 }
 
 .nav-link:hover {
@@ -3581,6 +3621,21 @@
   padding: 0.85rem 1rem;
   display: grid;
   gap: 0.5rem;
+}
+
+.notif-item--button {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.12s;
+}
+
+.notif-item--button:hover {
+  border-color: var(--accent, #6366f1);
+  background: var(--accent-tint, rgba(99,102,241,0.08));
+  transform: translateY(-1px);
 }
 
 .notif-item-meta {

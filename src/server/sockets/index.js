@@ -43,6 +43,11 @@ function emitMessageToParticipants(io, result) {
       threadId: result.threadId,
       message: result.payload,
     });
+    io.to(`user:${participantId}`).emit('notifications:changed', {
+      reason: 'message',
+      threadId: result.threadId,
+      changedAt: new Date().toISOString(),
+    });
   });
 }
 

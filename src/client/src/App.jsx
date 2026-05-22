@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { io } from 'socket.io-client'
 import AdminDashboardPage from './pages/admin'
@@ -25,7 +25,7 @@ function App() {
   const [profileSection, setProfileSection] = useState(null)
   const [profilePicUrl, setProfilePicUrl] = useState(null)
   const [groupInviteCount, setGroupInviteCount] = useState(0)
-  const [chatUnreadCount, setChatUnreadCount] = useState(0)
+  const [notificationCount, setNotificationCount] = useState(0)
   const notificationSocketRef = useRef(null)
   const locationRef = useRef(location)
   const userMenuRef = useRef(null)
@@ -47,12 +47,44 @@ function App() {
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [])
 
-  // Reset notification counts on navigation.
-  useEffect(() => {
-    if (location.pathname.startsWith('/chat')) setChatUnreadCount(0)
-    if (location.pathname.startsWith('/notifications') || location.pathname.startsWith('/groups')) {
-      setGroupInviteCount(0)
+  const refreshNotificationCount = useCallback(async () => {
+    if (!token || isAdmin) {
+      setNotificationCount(0)
+      return
     }
+
+    try {
+      const api = createApiClient()
+      const response = await api.get('/api/chat/notifications/unread-count')
+      setNotificationCount(Number(response.data?.unreadCount || 0))
+    } catch {
+      // Non-fatal: realtime events and route visits will retry.
+    }
+  }, [token, isAdmin])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      refreshNotificationCount()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [refreshNotificationCount, location.pathname])
+
+  useEffect(() => {
+    function handleNotificationsChanged() {
+      refreshNotificationCount()
+    }
+
+    window.addEventListener('securechat-notifications-changed', handleNotificationsChanged)
+    return () => window.removeEventListener('securechat-notifications-changed', handleNotificationsChanged)
+  }, [refreshNotificationCount])
+
+  // Reset temporary invitation toast on navigation to places that review group notices.
+  useEffect(() => {
+    if (location.pathname.startsWith('/notifications') || location.pathname.startsWith('/groups')) {
+      const timer = window.setTimeout(() => setGroupInviteCount(0), 0)
+      return () => window.clearTimeout(timer)
+    }
+    return undefined
   }, [location.pathname])
 
   useEffect(() => {
@@ -76,12 +108,16 @@ function App() {
 
   // Fetch the user's profile picture URL whenever they log in/out.
   useEffect(() => {
-    if (!token) { setProfilePicUrl(null); return }
+    if (!token) {
+      const timer = window.setTimeout(() => setProfilePicUrl(null), 0)
+      return () => window.clearTimeout(timer)
+    }
     const api = createApiClient()
     api.get('/api/profile').then(res => {
       const raw = res.data?.profile?.profilePictureUrl || null
       setProfilePicUrl(raw)
     }).catch(() => {})
+    return undefined
   }, [token])
 
   // Sync profile picture updates that happen on the Profile page.
@@ -147,13 +183,24 @@ function App() {
         invitedAt: payload?.invitedAt || new Date().toISOString(),
       }
       setGroupInviteCount((prev) => prev + 1)
+      refreshNotificationCount()
       window.dispatchEvent(new CustomEvent('securechat-group-invitation', { detail: notice }))
     })
 
-    socket.on('chat:message:new', () => {
-      if (!locationRef.current.pathname.startsWith('/chat')) {
-        setChatUnreadCount((prev) => prev + 1)
+    socket.on('chat:request:new', () => {
+      refreshNotificationCount()
+      window.dispatchEvent(new Event('securechat-notifications-changed'))
+    })
+
+    socket.on('chat:message:new', (payload) => {
+      if (String(payload?.message?.senderId || '') !== String(currentUser?.id || '')) {
+        refreshNotificationCount()
       }
+    })
+
+    socket.on('notifications:changed', () => {
+      refreshNotificationCount()
+      window.dispatchEvent(new Event('securechat-notifications-changed'))
     })
 
     return () => {
@@ -162,7 +209,7 @@ function App() {
         notificationSocketRef.current = null
       }
     }
-  }, [token, isAdmin])
+  }, [token, isAdmin, currentUser?.id, refreshNotificationCount])
 
   function handleSignOut() {
     localStorage.removeItem('secureChatToken')
@@ -204,13 +251,6 @@ function App() {
                 {!isAdmin && (
                   <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
                     Chat
-                    {chatUnreadCount > 0 && <span className="nav-badge">{chatUnreadCount > 99 ? '99+' : chatUnreadCount}</span>}
-                  </NavLink>
-                )}
-                {!isAdmin && (
-                  <NavLink to="/notifications" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => { setNavOpen(false); setGroupInviteCount(0); }}>
-                    Notifications
-                    {groupInviteCount > 0 && <span className="nav-badge">{groupInviteCount > 99 ? '99+' : groupInviteCount}</span>}
                   </NavLink>
                 )}
                 {isAdmin && (
@@ -220,6 +260,27 @@ function App() {
                 )}
               </nav>
               <div className="app-navbar-end">
+                {!isAdmin && (
+                  <NavLink
+                    to="/notifications"
+                    className={({ isActive }) => isActive ? 'navbar-icon-btn active' : 'navbar-icon-btn'}
+                    aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}
+                    onClick={() => {
+                      setNavOpen(false)
+                      setGroupInviteCount(0)
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                    {notificationCount > 0 && (
+                      <span className="nav-badge nav-badge--floating">
+                        {notificationCount > 99 ? '99+' : notificationCount}
+                      </span>
+                    )}
+                  </NavLink>
+                )}
                 <div className="user-menu-wrap" ref={userMenuRef}>
                   <button
                     type="button"

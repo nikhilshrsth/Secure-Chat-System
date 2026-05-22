@@ -20,6 +20,8 @@ const {
   searchCustomerByEmail,
   listIncomingRequests,
   listOutgoingRequests,
+  getNotificationSummary,
+  markThreadMessagesRead,
   listAcceptedFriends,
   createChatRequest,
   acceptChatRequest,
@@ -69,7 +71,60 @@ function emitGroupInvitations(io, { invitedUserIds = [], threadId, groupName, in
   });
 }
 
+function emitNotificationChanged(io, userId, payload = {}) {
+  if (!userId) return;
+  io?.to(`user:${String(userId)}`).emit('notifications:changed', {
+    changedAt: new Date().toISOString(),
+    ...payload,
+  });
+}
+
 router.use(protect);
+
+router.get('/notifications', async (req, res, next) => {
+  try {
+    const summary = await getNotificationSummary(req.user._id);
+    res.json(summary);
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.get('/notifications/unread-count', async (req, res, next) => {
+  try {
+    const summary = await getNotificationSummary(req.user._id);
+    res.json({ unreadCount: summary.unreadCount });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.post('/notifications/read', async (req, res, next) => {
+  try {
+    const type = String(req.body?.type || '');
+    if (type !== 'message') {
+      res.status(400);
+      throw new Error('Only message notifications can be marked as read directly');
+    }
+
+    const result = await markThreadMessagesRead({
+      threadId: req.body?.threadId,
+      userId: req.user._id,
+    });
+
+    emitNotificationChanged(req.app.get('io'), req.user._id, {
+      reason: 'message-read',
+      threadId: result.threadId,
+    });
+
+    res.status(200).json(result);
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
 
 router.get('/friends', async (req, res, next) => {
   try {
@@ -143,6 +198,17 @@ router.post('/requests', async (req, res, next) => {
       participantKeys,
     });
 
+    req.app.get('io')?.to(`user:${String(request.recipient?.id || '')}`).emit('chat:request:new', {
+      request,
+      requester: {
+        id: String(req.user._id),
+        username: req.user.username,
+        email: req.user.email,
+      },
+      createdAt: request.createdAt,
+    });
+    emitNotificationChanged(req.app.get('io'), request.recipient?.id, { reason: 'chat-request' });
+
     res.status(201).json({ request });
   } catch (error) {
     withStatus(res, error);
@@ -169,6 +235,7 @@ router.post('/requests/:requestId/accept', async (req, res, next) => {
         threadId,
         message: result.initialMessage,
       });
+      emitNotificationChanged(io, participantId, { reason: 'message', threadId });
     });
 
     res.status(200).json(result);
@@ -184,6 +251,8 @@ router.post('/requests/:requestId/reject', async (req, res, next) => {
       requestId: req.params.requestId,
       recipientId: req.user._id,
     });
+
+    emitNotificationChanged(req.app.get('io'), req.user._id, { reason: 'chat-request' });
 
     res.status(200).json(result);
   } catch (error) {
@@ -252,6 +321,7 @@ router.post('/groups/invitations/:invitationId/accept', async (req, res, next) =
       invitationId: String(result.invitationId),
       joinedAt: result.joinedAt,
     });
+    emitNotificationChanged(req.app.get('io'), userId, { reason: 'group-invitation', threadId });
 
     res.status(200).json(result);
   } catch (error) {
@@ -266,6 +336,8 @@ router.post('/groups/invitations/:invitationId/decline', async (req, res, next) 
       invitationId: req.params.invitationId,
       userId: req.user._id,
     });
+
+    emitNotificationChanged(req.app.get('io'), req.user._id, { reason: 'group-invitation' });
 
     res.status(200).json(result);
   } catch (error) {
@@ -311,6 +383,12 @@ router.post('/threads/group', async (req, res, next) => {
       groupName: thread.name,
       inviter: req.user,
       invitedAt: thread.createdAt || new Date(),
+    });
+    invitedUserIds.forEach((userId) => {
+      emitNotificationChanged(req.app.get('io'), userId, {
+        reason: 'group-invitation',
+        threadId: String(thread._id),
+      });
     });
 
     res.status(201).json({
@@ -366,6 +444,12 @@ router.post('/threads/:threadId/group/invitations', async (req, res, next) => {
       groupName: result.groupName || null,
       inviter: req.user,
     });
+    (result.invitedUserIds || []).forEach((userId) => {
+      emitNotificationChanged(req.app.get('io'), userId, {
+        reason: 'group-invitation',
+        threadId: String(result.threadId),
+      });
+    });
 
     res.status(201).json(result);
   } catch (error) {
@@ -414,6 +498,12 @@ router.post('/threads/:threadId/messages', async (req, res, next) => {
     });
 
     emitMessageToParticipants(req.app.get('io'), result);
+    (result.participantIds || []).forEach((participantId) => {
+      emitNotificationChanged(req.app.get('io'), participantId, {
+        reason: 'message',
+        threadId: result.threadId,
+      });
+    });
 
     res.status(201).json({ message: result.payload });
   } catch (error) {

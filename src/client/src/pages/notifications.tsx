@@ -46,6 +46,34 @@ type GroupInvitation = {
   invitedAt: string;
 };
 
+type MessageNotification = {
+  id: string;
+  type: 'message';
+  threadId: string;
+  threadType: string;
+  title: string;
+  unreadCount: number;
+  sender: {
+    id: string;
+    username: string;
+    email?: string | null;
+  };
+  lastMessage: {
+    id: string;
+    senderName: string;
+    encryptedPayload: {
+      ciphertext: string;
+      iv: string;
+      authTag: string;
+      algorithm: string;
+    };
+    createdAt: string;
+  };
+  createdAt: string;
+  status: string;
+  preview?: string;
+};
+
 function formatDate(value?: string | null) {
   if (!value) return '';
   return new Date(value).toLocaleString([], {
@@ -66,6 +94,7 @@ function NotificationsPage() {
 
   const [requests, setRequests] = useState<(IncomingRequest & { preview: string })[]>([]);
   const [invitations, setInvitations] = useState<GroupInvitation[]>([]);
+  const [messages, setMessages] = useState<(MessageNotification & { preview: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState({ type: '', message: '' });
   const [decidingId, setDecidingId] = useState('');
@@ -75,14 +104,13 @@ function NotificationsPage() {
     try {
       const identity = await getOrCreateIdentity();
 
-      const [reqRes, invRes] = await Promise.all([
-        api.get('/api/chat/requests/incoming'),
-        api.get('/api/chat/groups/invitations'),
-      ]);
+      const summaryRes = await api.get('/api/chat/notifications');
+      const summary = summaryRes.data?.notifications || {};
 
-      const rawRequests: IncomingRequest[] = (reqRes.data.requests || []).filter(
+      const rawRequests: IncomingRequest[] = (summary.requests || []).filter(
         (r: IncomingRequest) => r.status === 'pending',
       );
+      const rawMessages: MessageNotification[] = summary.messages || [];
 
       const withPreviews = await Promise.all(
         rawRequests.map(async (request) => {
@@ -100,8 +128,24 @@ function NotificationsPage() {
         }),
       );
 
+      const messagePreviews = await Promise.all(
+        rawMessages.map(async (notification) => {
+          try {
+            const threadKey = await decryptThreadKeyForUser(
+              String((await api.get(`/api/chat/threads/${notification.threadId}/key`)).data?.encryptedKey || ''),
+              identity,
+            );
+            const preview = await decryptMessageText(notification.lastMessage.encryptedPayload, threadKey);
+            return { ...notification, preview };
+          } catch {
+            return { ...notification, preview: '[Unable to decrypt]' };
+          }
+        }),
+      );
+
+      setMessages(messagePreviews);
       setRequests(withPreviews);
-      setInvitations(invRes.data.invitations || []);
+      setInvitations(summary.invitations || []);
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to load notifications.' });
@@ -117,9 +161,27 @@ function NotificationsPage() {
       loadAll().catch(() => {});
     }
     window.addEventListener('securechat-group-invitation', handleGroupInvitation);
-    return () => window.removeEventListener('securechat-group-invitation', handleGroupInvitation);
+    window.addEventListener('securechat-notifications-changed', handleGroupInvitation);
+    return () => {
+      window.removeEventListener('securechat-group-invitation', handleGroupInvitation);
+      window.removeEventListener('securechat-notifications-changed', handleGroupInvitation);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function openMessageNotification(notification: MessageNotification) {
+    try {
+      await api.post('/api/chat/notifications/read', {
+        type: 'message',
+        threadId: notification.threadId,
+      });
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
+    } catch {
+      // Chat will still mark visible messages as read when it opens.
+    } finally {
+      navigate(`/chat?thread=${notification.threadId}`);
+    }
+  }
 
   async function acceptRequest(requestId: string) {
     setDecidingId(requestId);
@@ -128,6 +190,7 @@ function NotificationsPage() {
       await api.post(`/api/chat/requests/${requestId}/accept`);
       setStatus({ type: 'success', message: 'Chat request accepted.' });
       await loadAll();
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to accept request.' });
@@ -143,6 +206,7 @@ function NotificationsPage() {
       await api.post(`/api/chat/requests/${requestId}/reject`);
       setStatus({ type: 'success', message: 'Chat request rejected.' });
       await loadAll();
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to reject request.' });
@@ -159,6 +223,7 @@ function NotificationsPage() {
       const threadId = String(response.data?.threadId || '');
       setStatus({ type: 'success', message: 'Group invitation accepted.' });
       await loadAll();
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
       if (threadId) navigate(`/chat?thread=${threadId}`);
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
@@ -175,6 +240,7 @@ function NotificationsPage() {
       await api.post(`/api/chat/groups/invitations/${invitationId}/decline`);
       setStatus({ type: 'success', message: 'Group invitation declined.' });
       await loadAll();
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to decline invitation.' });
@@ -183,7 +249,7 @@ function NotificationsPage() {
     }
   }
 
-  const totalCount = requests.length + invitations.length;
+  const totalCount = messages.reduce((total, item) => total + item.unreadCount, 0) + requests.length + invitations.length;
 
   return (
     <section className="notif-shell">
@@ -194,6 +260,35 @@ function NotificationsPage() {
         <div className="card notif-empty">
           <p className="empty-state">No pending notifications — you are all caught up.</p>
         </div>
+      )}
+
+      {!loading && messages.length > 0 && (
+        <section className="notif-section card">
+          <h3 className="notif-section-title">
+            New messages
+            <span className="count-badge">{messages.reduce((total, item) => total + item.unreadCount, 0)}</span>
+          </h3>
+          <div className="notif-list">
+            {messages.map((notification) => (
+              <button
+                key={notification.id}
+                type="button"
+                className="notif-item notif-item--button"
+                onClick={() => openMessageNotification(notification)}
+              >
+                <div className="notif-item-meta">
+                  <strong>{notification.threadType === 'group' ? notification.title : notification.sender.username}</strong>
+                  <span className="notif-item-sub">
+                    {notification.unreadCount} unread message{notification.unreadCount !== 1 ? 's' : ''}
+                    {notification.threadType === 'group' ? ` in ${notification.title}` : ''}
+                  </span>
+                  <span className="notif-item-time">{formatDate(notification.createdAt)}</span>
+                </div>
+                <p className="notif-item-preview">{notification.preview}</p>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
 
       {!loading && requests.length > 0 && (

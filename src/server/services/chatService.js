@@ -1005,6 +1005,156 @@ async function listOutgoingRequests(userId) {
   }));
 }
 
+async function listUnreadMessageNotifications(userId) {
+  const userObjectId = toObjectId(userId);
+  const threads = await ChatThread.find({ participantIds: userId, status: { $ne: 'archived' } })
+    .populate('participantIds', 'username email role isActive publicKey keyExchangePublicKey')
+    .lean();
+
+  const groupIds = threads
+    .filter((thread) => thread.threadType === 'group')
+    .map((thread) => thread._id);
+  const memberships = groupIds.length > 0
+    ? await GroupMember.find({ groupId: { $in: groupIds }, userId, status: 'accepted' }).lean()
+    : [];
+  const membershipByGroup = new Map(memberships.map((membership) => [String(membership.groupId), membership]));
+
+  const notifications = await Promise.all(
+    threads.map(async (thread) => {
+      const membership = membershipByGroup.get(String(thread._id));
+      if (thread.threadType === 'group' && !membership?.joinedAt) {
+        return null;
+      }
+
+      const query = {
+        threadId: thread._id,
+        sender: { $ne: userObjectId },
+        readAt: null,
+        deletedForEveryone: { $ne: true },
+        deletedFor: { $not: { $elemMatch: { $eq: userObjectId } } },
+      };
+
+      if (thread.threadType === 'group' && membership?.joinedAt) {
+        query.createdAt = { $gte: membership.joinedAt };
+      }
+
+      const [unreadCount, lastMessage] = await Promise.all([
+        Message.countDocuments(query),
+        Message.findOne(query)
+          .sort({ createdAt: -1 })
+          .populate('sender', 'username email')
+          .lean(),
+      ]);
+
+      if (!unreadCount || !lastMessage) return null;
+
+      return {
+        id: `message:${thread._id}`,
+        type: 'message',
+        threadId: thread._id,
+        threadType: thread.threadType,
+        title: thread.threadType === 'group'
+          ? (thread.name || 'Encrypted group')
+          : ((thread.participantIds || []).find((participant) => !isSameId(participant._id, userId))?.username || 'Direct message'),
+        participants: (thread.participantIds || []).map((participant) => ({
+          id: participant._id,
+          username: participant.username,
+          email: participant.email,
+          role: participant.role,
+          isActive: participant.isActive,
+          publicKey: participant.publicKey || null,
+          keyExchangePublicKey: participant.keyExchangePublicKey || null,
+        })),
+        unreadCount,
+        sender: {
+          id: lastMessage.sender?._id || lastMessage.sender,
+          username: lastMessage.sender?.username || 'Unknown',
+          email: lastMessage.sender?.email || null,
+        },
+        lastMessage: {
+          id: lastMessage._id,
+          senderName: lastMessage.sender?.username || 'Unknown',
+          encryptedPayload: {
+            ciphertext: lastMessage.ciphertext,
+            iv: lastMessage.iv,
+            authTag: lastMessage.authTag,
+            algorithm: lastMessage.algorithm || 'aes-256-gcm',
+          },
+          createdAt: lastMessage.createdAt,
+        },
+        createdAt: lastMessage.createdAt,
+        status: 'unread',
+      };
+    }),
+  );
+
+  return notifications
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+async function getNotificationSummary(userId) {
+  const [messages, requests, invitations] = await Promise.all([
+    listUnreadMessageNotifications(userId),
+    listIncomingRequests(userId),
+    listGroupInvitations(userId),
+  ]);
+
+  return {
+    unreadCount: messages.reduce((total, item) => total + item.unreadCount, 0) + requests.length + invitations.length,
+    notifications: {
+      messages,
+      requests,
+      invitations,
+    },
+  };
+}
+
+async function markThreadMessagesRead({ threadId, userId }) {
+  const thread = await assertThreadAccess(threadId, userId);
+  const userObjectId = toObjectId(userId);
+  const query = buildVisibleMessageQuery(thread, userId, {
+    sender: { $ne: userObjectId },
+    readAt: null,
+    deletedForEveryone: { $ne: true },
+    deletedFor: { $not: { $elemMatch: { $eq: userObjectId } } },
+  });
+
+  const messages = await Message.find(query);
+  const now = new Date();
+
+  await Promise.all(messages.map(async (message) => {
+    message.readAt = now;
+
+    if (message.deleteAfterReadSeconds && !message.expiresAt) {
+      message.expiresAt = new Date(now.getTime() + message.deleteAfterReadSeconds * 1000);
+
+      await EphemeralMessageLog.findOneAndUpdate(
+        { messageId: String(message._id) },
+        {
+          $set: {
+            threadId: String(message.threadId),
+            senderId: message.sender,
+            expiryAt: message.expiresAt,
+            deletionStatus: 'pending',
+            deletedAt: null,
+          },
+        },
+        { upsert: true, returnDocument: 'after' },
+      );
+    }
+
+    await message.save();
+  }));
+
+  return {
+    ok: true,
+    threadId: String(thread._id),
+    readAt: now,
+    modifiedCount: messages.length,
+  };
+}
+
 async function createChatRequest({ requesterId, recipientEmail, encryptedPayload, participantKeys }) {
   const recipient = await searchCustomerByEmail(recipientEmail, requesterId);
 
@@ -1173,6 +1323,8 @@ module.exports = {
   searchCustomerByEmail,
   listIncomingRequests,
   listOutgoingRequests,
+  getNotificationSummary,
+  markThreadMessagesRead,
   listAcceptedFriends,
   createChatRequest,
   acceptChatRequest,

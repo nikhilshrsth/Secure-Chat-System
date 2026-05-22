@@ -266,6 +266,7 @@ function ChatPage() {
           message.id === messageId ? { ...message, readAt: response.data?.readAt || message.readAt, expiresAt } : message
         )));
       }
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (_error) {
       // Non-fatal: read receipts should not interrupt chat rendering.
     }
@@ -605,6 +606,7 @@ function ChatPage() {
       if (threadId) setActiveThreadId(threadId);
       setStatus({ type: 'success', message: 'Request accepted. Secure chat is now active.' });
       await Promise.all([refreshThreads(), refreshRequests()]);
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to accept request.' });
@@ -616,6 +618,7 @@ function ChatPage() {
       await api.post(`/api/chat/requests/${requestId}/reject`);
       setStatus({ type: 'success', message: 'Request rejected. Sender is blocked from messaging you again.' });
       await refreshRequests();
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to reject request.' });

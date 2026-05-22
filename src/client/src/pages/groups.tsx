@@ -268,6 +268,7 @@ function GroupsPage() {
       const response = await api.post(`/api/chat/groups/invitations/${invitationId}/accept`);
       const threadId = String(response.data?.threadId || '');
       await Promise.all([refreshGroups(threadId || undefined), refreshInvitations()]);
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
       setStatus({ type: 'success', message: 'Group invitation accepted. Only new messages from this join time are available.' });
       if (threadId) {
         navigate(`/chat?thread=${threadId}`);
@@ -288,6 +289,7 @@ function GroupsPage() {
       await api.post(`/api/chat/groups/invitations/${invitationId}/decline`);
       setStatus({ type: 'success', message: 'Group invitation declined.' });
       await refreshInvitations();
+      window.dispatchEvent(new Event('securechat-notifications-changed'));
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ message?: string }>;
       setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Unable to decline invitation.' });
