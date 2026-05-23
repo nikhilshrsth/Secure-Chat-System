@@ -10,6 +10,9 @@ import LoginPage from './pages/login'
 import NotificationsPage from './pages/notifications'
 import ProfilePage from './pages/profile'
 import RegisterPage from './pages/register'
+import PrivacyPage from './pages/privacy'
+import SecurityPage from './pages/security'
+import SupportPage from './pages/support'
 import { createApiClient } from './lib/api'
 import { getOrCreateIdentity } from './lib/chatE2ee'
 import './App.css'
@@ -33,6 +36,7 @@ function App() {
   const storedUser = localStorage.getItem('secureChatUser')
   const currentUser = storedUser ? JSON.parse(storedUser) : null
   const isAdmin = currentUser?.role === 'admin'
+  const isPublicInfoPage = ['/privacy', '/security', '/support'].includes(location.pathname)
 
   // Keep locationRef current so socket callbacks have access without stale closures.
   useEffect(() => { locationRef.current = location }, [location])
@@ -226,6 +230,34 @@ function App() {
     setProfileOpen(true)
     setUserMenuOpen(false)
     setNavOpen(false)
+  }
+
+  if (!token && isPublicInfoPage) {
+    return (
+      <main className="public-info-shell">
+        <header className="public-info-nav">
+          <NavLink to="/login" className="app-navbar-brand">
+            <img src="/scslogo.png" alt="Shadow Link" className="navbar-logo" />
+            <span className="navbar-brand-name">Shadow Link</span>
+          </NavLink>
+          <nav aria-label="Public navigation">
+            <NavLink to="/privacy">Privacy</NavLink>
+            <NavLink to="/security">Security</NavLink>
+            <NavLink to="/support">Support</NavLink>
+            <NavLink to="/login" className="public-info-login">Sign in</NavLink>
+          </nav>
+        </header>
+        <div className="public-info-page">
+          <Routes>
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/security" element={<SecurityPage />} />
+            <Route path="/support" element={<SupportPage />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </div>
+        <Footer />
+      </main>
+    )
   }
 
   if (token) {
@@ -438,6 +470,9 @@ function App() {
             <Route path="/groups" element={isAdmin ? <Navigate to="/admin" replace /> : <GroupsPage />} />
             <Route path="/notifications" element={isAdmin ? <Navigate to="/admin" replace /> : <NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/security" element={<SecurityPage />} />
+            <Route path="/support" element={<SupportPage />} />
             <Route path="/chat" element={isAdmin ? <Navigate to="/admin" replace /> : <ChatPage />} />
             <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/chat" replace />} />
             <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
