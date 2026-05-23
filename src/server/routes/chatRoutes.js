@@ -368,15 +368,45 @@ router.post('/threads/direct', async (req, res, next) => {
 router.post('/threads/group', async (req, res, next) => {
   try {
     const { participantIds, participantKeys, name } = req.body;
+
     const thread = await createGroupThread({
       creatorId: req.user._id,
       participantIds,
       participantKeys,
       name,
     });
+
     const invitedUserIds = Array.from(
-      new Set((participantIds || []).map((id) => String(id)).filter((id) => id && id !== String(req.user._id))),
+      new Set(
+        (participantIds || [])
+          .map((id) => String(id))
+          .filter((id) => id && id !== String(req.user._id))
+      )
     );
+
+    const invitedUsers = await User.find({
+      _id: { $in: invitedUserIds },
+    }).select('username email');
+
+    
+
+    if (invitedUsers.length > 0) {
+      await Promise.all(
+        invitedUsers
+          .filter((user) => user.email)
+          .map(async (user) => {
+            try {
+              await sendEmail(
+                user.email,
+                'New group invitation on Shadow Link',
+                `${req.user?.username || 'Someone'} added you to ${name || 'a group'} on Shadow Link. Open the app to view the group.`
+              );
+            } catch (emailError) {
+              console.error('Group creation email failed:', emailError.message);
+            }
+          })
+      );
+    }
 
     emitGroupInvitations(req.app.get('io'), {
       invitedUserIds,
@@ -385,6 +415,7 @@ router.post('/threads/group', async (req, res, next) => {
       inviter: req.user,
       invitedAt: thread.createdAt || new Date(),
     });
+
     invitedUserIds.forEach((userId) => {
       emitNotificationChanged(req.app.get('io'), userId, {
         reason: 'group-invitation',
@@ -438,6 +469,7 @@ router.post('/threads/:threadId/group/invitations', async (req, res, next) => {
       participantIds: req.body?.participantIds,
       participantKeys: req.body?.participantKeys,
     });
+    console.log('Group invite result:', result)
     if (Array.isArray(result.invitedUsers) && result.invitedUsers.length > 0) {
   await Promise.all(
     result.invitedUsers
