@@ -1,6 +1,7 @@
 const express = require('express');
 
 const User = require('../models/User');
+const { sendEmail } = require('../services/emailOtpService')
 const { protect } = require('../middleware/authMiddleware');
 const {
   getOrCreateDirectThread,
@@ -437,6 +438,23 @@ router.post('/threads/:threadId/group/invitations', async (req, res, next) => {
       participantIds: req.body?.participantIds,
       participantKeys: req.body?.participantKeys,
     });
+    if (Array.isArray(result.invitedUsers) && result.invitedUsers.length > 0) {
+  await Promise.all(
+    result.invitedUsers
+      .filter((user) => user.email)
+      .map(async (user) => {
+        try {
+          await sendEmail(
+            user.email,
+            'New group invitation on Shadow Link',
+            `${req.user?.username || 'Someone'} invited you to join ${result.groupName || 'a group'} on Shadow Link. Open the app to accept or decline.`
+          )
+        } catch (emailError) {
+          console.error('Group invitation email failed:', emailError.message)
+        }
+      })
+  )
+}
 
     emitGroupInvitations(req.app.get('io'), {
       invitedUserIds: result.invitedUserIds || [],
