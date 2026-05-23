@@ -13,6 +13,7 @@ import RegisterPage from './pages/register'
 import { createApiClient } from './lib/api'
 import { getOrCreateIdentity } from './lib/chatE2ee'
 import './App.css'
+import Footer from "./components/Footer"
 
 function App() {
   const location = useLocation()
@@ -444,6 +445,7 @@ function App() {
             <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
           </Routes>
         </div>
+        
       </main>
     )
   }
