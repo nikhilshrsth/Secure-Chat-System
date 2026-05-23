@@ -445,7 +445,8 @@ function App() {
             <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
           </Routes>
         </div>
-        
+      <Footer />
+
       </main>
     )
   }
