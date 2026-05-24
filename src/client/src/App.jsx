@@ -1,18 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { io } from 'socket.io-client'
-import AdminDashboardPage from './pages/admin'
-import ChatPage from './pages/chat'
-import FriendsPage from './pages/friends'
-import CustomerDashboardPage from './pages/dashboard'
-import GroupsPage from './pages/groups'
-import LoginPage from './pages/login'
-import NotificationsPage from './pages/notifications'
-import ProfilePage from './pages/profile'
-import RegisterPage from './pages/register'
-import PrivacyPage from './pages/privacy'
-import SecurityPage from './pages/security'
-import SupportPage from './pages/support'
+const AdminDashboardPage  = lazy(() => import('./pages/admin'))
+const ChatPage            = lazy(() => import('./pages/chat'))
+const FriendsPage         = lazy(() => import('./pages/friends'))
+const CustomerDashboardPage = lazy(() => import('./pages/dashboard'))
+const GroupsPage          = lazy(() => import('./pages/groups'))
+const LoginPage           = lazy(() => import('./pages/login'))
+const NotificationsPage   = lazy(() => import('./pages/notifications'))
+const ProfilePage         = lazy(() => import('./pages/profile'))
+const RegisterPage        = lazy(() => import('./pages/register'))
+const PrivacyPage         = lazy(() => import('./pages/privacy'))
+const SecurityPage        = lazy(() => import('./pages/security'))
+const SupportPage         = lazy(() => import('./pages/support'))
 import { createApiClient } from './lib/api'
 import { getOrCreateIdentity } from './lib/chatE2ee'
 import './App.css'
@@ -248,12 +248,14 @@ function App() {
           </nav>
         </header>
         <div className="public-info-page">
-          <Routes>
-            <Route path="/privacy" element={<PrivacyPage />} />
-            <Route path="/security" element={<SecurityPage />} />
-            <Route path="/support" element={<SupportPage />} />
-            <Route path="*" element={<Navigate to="/login" replace />} />
-          </Routes>
+          <Suspense fallback={null}>
+            <Routes>
+              <Route path="/privacy" element={<PrivacyPage />} />
+              <Route path="/security" element={<SecurityPage />} />
+              <Route path="/support" element={<SupportPage />} />
+              <Route path="*" element={<Navigate to="/login" replace />} />
+            </Routes>
+          </Suspense>
         </div>
         <Footer />
       </main>
@@ -272,23 +274,37 @@ function App() {
               </NavLink>
               <nav className={`app-navbar-links${navOpen ? ' open' : ''}`} aria-label="Main navigation">
                 {!isAdmin && (
-                  <NavLink to="/friends" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Friends
+                  <NavLink to="/friends" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} title="Friends" onClick={() => setNavOpen(false)}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                      <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+                    </svg>
+                    <span className="nav-link-label">Friends</span>
                   </NavLink>
                 )}
                 {!isAdmin && (
-                  <NavLink to="/groups" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Groups
+                  <NavLink to="/groups" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} title="Groups" onClick={() => setNavOpen(false)}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                    <span className="nav-link-label">Groups</span>
                   </NavLink>
                 )}
                 {!isAdmin && (
-                  <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Chat
+                  <NavLink to="/chat" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} title="Chat" onClick={() => setNavOpen(false)}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span className="nav-link-label">Chat</span>
                   </NavLink>
                 )}
                 {isAdmin && (
-                  <NavLink to="/admin" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setNavOpen(false)}>
-                    Admin
+                  <NavLink to="/admin" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} title="Admin" onClick={() => setNavOpen(false)}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                    <span className="nav-link-label">Admin</span>
                   </NavLink>
                 )}
               </nav>
@@ -458,27 +474,31 @@ function App() {
                 </button>
               </div>
               <div className="profile-drawer-body">
-                <ProfilePage onThemeChange={setTheme} initialSection={profileSection} />
+                <Suspense fallback={null}>
+                  <ProfilePage onThemeChange={setTheme} initialSection={profileSection} />
+                </Suspense>
               </div>
             </aside>
           </>
         )}
         <div className="app-page">
-          <Routes>
-            <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
-            <Route path="/friends" element={isAdmin ? <Navigate to="/admin" replace /> : <FriendsPage />} />
-            <Route path="/groups" element={isAdmin ? <Navigate to="/admin" replace /> : <GroupsPage />} />
-            <Route path="/notifications" element={isAdmin ? <Navigate to="/admin" replace /> : <NotificationsPage />} />
-            <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
-            <Route path="/privacy" element={<PrivacyPage />} />
-            <Route path="/security" element={<SecurityPage />} />
-            <Route path="/support" element={<SupportPage />} />
-            <Route path="/chat" element={isAdmin ? <Navigate to="/admin" replace /> : <ChatPage />} />
-            <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/chat" replace />} />
-            <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
-            <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
-            <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
-          </Routes>
+          <Suspense fallback={null}>
+            <Routes>
+              <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
+              <Route path="/friends" element={isAdmin ? <Navigate to="/admin" replace /> : <FriendsPage />} />
+              <Route path="/groups" element={isAdmin ? <Navigate to="/admin" replace /> : <GroupsPage />} />
+              <Route path="/notifications" element={isAdmin ? <Navigate to="/admin" replace /> : <NotificationsPage />} />
+              <Route path="/profile" element={<ProfilePage onThemeChange={setTheme} />} />
+              <Route path="/privacy" element={<PrivacyPage />} />
+              <Route path="/security" element={<SecurityPage />} />
+              <Route path="/support" element={<SupportPage />} />
+              <Route path="/chat" element={isAdmin ? <Navigate to="/admin" replace /> : <ChatPage />} />
+              <Route path="/admin" element={isAdmin ? <AdminDashboardPage /> : <Navigate to="/chat" replace />} />
+              <Route path="/login" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
+              <Route path="/register" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
+              <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/chat'} replace />} />
+            </Routes>
+          </Suspense>
         </div>
       <Footer />
 
@@ -489,12 +509,14 @@ function App() {
   return (
     <main className="auth-shell">
       <section className="auth-panel auth-panel--minimal" aria-label="Authentication panel">
-        <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Suspense>
       </section>
     </main>
   )

@@ -16,6 +16,23 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), basicSsl()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('react-dom') || id.includes('react-router') || id.includes('react/')) {
+                return 'vendor-react'
+              }
+              if (id.includes('socket.io')) {
+                return 'vendor-socket'
+              }
+              return 'vendor-misc'
+            }
+          },
+        },
+      },
+    },
     server: {
       host: '0.0.0.0',
       https: true,

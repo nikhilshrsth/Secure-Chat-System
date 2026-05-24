@@ -1055,11 +1055,14 @@
   gap: 1rem;
   background: var(--bg);
   color: var(--ink);
+  padding: 1.25rem;
+}
+
 .admin-summary-bar {
-  border: 1px solid rgba(125, 161, 190, 0.18);
-  border-radius: 10px;
-  background: rgba(10, 24, 40, 0.9);
   border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
   padding: 0.85rem;
   display: flex;
   gap: 0.55rem;
@@ -1288,68 +1291,18 @@
   color: var(--ink);
 }
 
-.admin-route-shell {
-  min-height: 100vh;
-  width: 100%;
-  background: #07111d;
-  color: #dce9f6;
-}
-
-.admin-shell {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background:
-    linear-gradient(135deg, rgba(12, 28, 44, 0.98), rgba(6, 12, 22, 0.99)),
-    #07111d;
-}
-
-.admin-navbar {
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
-
-.admin-navbar .navbar-inner {
-  max-width: 1320px;
-}
-
-.admin-navbar .navbar-brand-name {
-  color: var(--ink);
-}
-
-.admin-navbar-end {
-  gap: 0.5rem;
-}
-
-.admin-main {
-  min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: 1rem;
-  background: var(--bg);
-  color: var(--ink);
-  padding: 1.25rem;
-}
-
-.admin-summary-bar {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
-  padding: 0.85rem;
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
+.badge {
+  display: inline-flex;
   align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-.admin-summary-actions {
-  display: flex;
-  gap: 0.45rem;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-  background: var(--surface);
+.badge.good {
+  color: #6ee7b7;
   background: rgba(44, 158, 119, 0.18);
 }
 
@@ -1357,43 +1310,10 @@
   color: #ffe09a;
   background: rgba(191, 139, 45, 0.18);
 }
-.admin-navbar .navbar-brand-name {
-  color: var(--ink);
-}
-
 
 .badge.danger {
   color: #ffb4be;
-
-.admin-summary-bar {
-  border: 1px solid rgba(125, 161, 190, 0.18);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
-  padding: 0.85rem;
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.admin-summary-actions {
-  display: flex;
-  gap: 0.45rem;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-
-.admin-main {
-  min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: 1rem;
-  padding: 1.25rem;
-}
-  gap: 0.4rem;
-  font-size: 0.9rem;
-  color: var(--ink-soft);
+  background: rgba(239, 68, 68, 0.18);
 }
 
 .profile-form select,
@@ -3626,13 +3546,66 @@
     flex-direction: column;
   }
 
+  .dashboard-header {
+    flex-direction: column;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-page {
+    padding: 1rem 0.75rem;
+  }
+
+  .dash-hero {
+    flex-direction: column;
+  }
+
+  .dash-body {
+    grid-template-columns: 1fr;
+  }
+
+  .dash-kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+}
+
+/* ── Navbar: icon-only nav at ≤768px (no hamburger toggle) ── */
+@media (max-width: 768px) {
+  /* Keep navbar as a single row */
+  .navbar-inner {
+    flex-wrap: nowrap;
+    height: 64px;
+    padding: 0 0.75rem;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  /* Hide the hamburger — not needed */
+  .navbar-burger { display: none; }
+
+  /* Always show nav links in the bar, pushed to the right */
+  .app-navbar-links {
+    display: flex;
+    order: unset;
+    flex: 1;
+    width: auto;
+    margin-left: 0;
+    flex-wrap: nowrap;
+    gap: 0.2rem;
+    padding-bottom: 0;
+    justify-content: flex-end;
+  }
+
+  /* Chat: single column, hide the sidebar */
   .chat-shell {
     grid-template-columns: 1fr;
   }
 
   .chat-sidebar {
-    max-height: 240px;
-    overflow-y: auto;
+    display: none;
   }
 
   .chat-main {
@@ -3671,30 +3644,7 @@
     width: 100%;
   }
 
-  .dashboard-header {
-    flex-direction: column;
-  }
-
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .app-page {
-    padding: 1rem 0.75rem;
-  }
-
-  .dash-hero {
-    flex-direction: column;
-  }
-
-  .dash-body {
-    grid-template-columns: 1fr;
-  }
-
-  .dash-kpi-row {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
+  /* Groups: single column, create/manage panel above the list */
   .groups-layout {
     grid-template-columns: 1fr;
   }
@@ -3702,32 +3652,37 @@
   .groups-picker {
     max-height: none;
   }
-}
 
-/* ── Navbar: collapse to hamburger at ≤768px ──────────────── */
-@media (max-width: 768px) {
-  /* Navbar mobile */
-  .navbar-inner {
-    flex-wrap: wrap;
-    height: auto;
-    padding: 0.5rem 1rem;
-    gap: 0.25rem 0.5rem;
-    align-items: center;
+  .groups-list-panel {
+    order: 2;
   }
 
-  .navbar-burger { display: flex; }
-
-  .app-navbar-links {
-    display: none;
-    order: 3;
-    width: 100%;
-    margin-left: 0;
-    flex-wrap: wrap;
-    gap: 0.1rem;
-    padding-bottom: 0.4rem;
+  .groups-create-panel,
+  .groups-manage-panel {
+    order: 1;
   }
 
-  .app-navbar-links.open { display: flex; }
+  /* Hide text labels — show icons only */
+  .nav-link-label { display: none; }
+
+  /* Style each nav link as a compact icon button — no border */
+  .nav-link {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    padding: 0;
+    justify-content: center;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  /* Remove border/circle from notification bell on mobile */
+  .navbar-icon-btn {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
 }
 
 /* ── Very small screens: logo only, no brand name ────────── */
