@@ -313,3 +313,134 @@ export async function decryptMessageText(payload: { ciphertext: string; iv: stri
     throw new Error(`Failed to decrypt message: ${msg || 'decryption failed'}`);
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Multi-device E2EE: passphrase-wrapped identity backup.
+
+   The user picks a passphrase. We derive a 256-bit AES-GCM key from it via
+   PBKDF2-SHA-256 with a per-user random salt, then encrypt the JSON identity
+   blob. Only ciphertext + KDF params travel to the server — the passphrase
+   never leaves the device.
+   ────────────────────────────────────────────────────────────────────────── */
+
+const BACKUP_ALGORITHM = 'PBKDF2-SHA256-AES-GCM-256';
+const BACKUP_ITERATIONS = 310_000; // OWASP 2023 recommendation for PBKDF2-SHA256
+
+export type EncryptedIdentityBackup = {
+  ciphertext: string;
+  iv: string;
+  salt: string;
+  iterations: number;
+  algorithm: string;
+  publicKeyFingerprint?: string | null;
+  updatedAt?: string | null;
+};
+
+async function deriveBackupKey(passphrase: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(passphrase),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey'],
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+async function fingerprintPublicKey(publicKey: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', base64ToBytes(publicKey));
+  return bytesToBase64(new Uint8Array(digest)).slice(0, 22);
+}
+
+export async function wrapIdentityWithPassphrase(
+  identity: StoredIdentity,
+  passphrase: string,
+): Promise<EncryptedIdentityBackup> {
+  if (!passphrase || passphrase.length < 8) {
+    throw new Error('Passphrase must be at least 8 characters');
+  }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveBackupKey(passphrase, salt, BACKUP_ITERATIONS);
+  const plaintext = new TextEncoder().encode(JSON.stringify(identity));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, tagLength: 128 }, key, plaintext);
+
+  return {
+    ciphertext: bytesToBase64(new Uint8Array(encrypted)),
+    iv: bytesToBase64(iv),
+    salt: bytesToBase64(salt),
+    iterations: BACKUP_ITERATIONS,
+    algorithm: BACKUP_ALGORITHM,
+    publicKeyFingerprint: await fingerprintPublicKey(identity.publicKey),
+  };
+}
+
+export async function unwrapIdentityWithPassphrase(
+  backup: EncryptedIdentityBackup,
+  passphrase: string,
+): Promise<StoredIdentity> {
+  if (!passphrase) {
+    throw new Error('Passphrase is required');
+  }
+  if (backup.algorithm !== BACKUP_ALGORITHM) {
+    throw new Error(`Unsupported backup algorithm: ${backup.algorithm}`);
+  }
+  const key = await deriveBackupKey(passphrase, base64ToBytes(backup.salt), backup.iterations);
+  let decrypted: ArrayBuffer;
+  try {
+    decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: base64ToBytes(backup.iv), tagLength: 128 },
+      key,
+      base64ToBytes(backup.ciphertext),
+    );
+  } catch {
+    throw new Error('Incorrect passphrase, or the backup is corrupted');
+  }
+  const parsed = JSON.parse(new TextDecoder().decode(decrypted)) as StoredIdentity;
+  if (!parsed.publicKey || !parsed.privateKeyJwk || !parsed.keyExchangePublicKey || !parsed.keyExchangePrivateKeyJwk) {
+    throw new Error('Backup is missing required key material');
+  }
+  return parsed;
+}
+
+/**
+ * Replace the on-device identity with the one restored from a backup.
+ * Used after `unwrapIdentityWithPassphrase` on a new device sign-in.
+ */
+export function persistIdentity(identity: StoredIdentity): void {
+  const rawUser = localStorage.getItem('secureChatUser');
+  let userId = '';
+  try {
+    userId = rawUser ? String(JSON.parse(rawUser)?.id || '') : '';
+  } catch {
+    userId = '';
+  }
+  const storageKey = userId ? `${IDENTITY_STORAGE_KEY}:${userId}` : IDENTITY_STORAGE_KEY;
+  localStorage.setItem(storageKey, JSON.stringify(identity));
+}
+
+/**
+ * Wipe the on-device identity. Caller must also call the server-side reset
+ * endpoint (`DELETE /api/chat/keys/public`) so the next sign-in can publish
+ * a fresh public key.
+ */
+export function clearLocalIdentity(): void {
+  const rawUser = localStorage.getItem('secureChatUser');
+  let userId = '';
+  try {
+    userId = rawUser ? String(JSON.parse(rawUser)?.id || '') : '';
+  } catch {
+    userId = '';
+  }
+  if (userId) {
+    localStorage.removeItem(`${IDENTITY_STORAGE_KEY}:${userId}`);
+  }
+  localStorage.removeItem(IDENTITY_STORAGE_KEY);
+}
+

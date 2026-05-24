@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent 
 import { useLocation } from 'react-router-dom';
 import { type AxiosError } from 'axios';
 import { createApiClient } from '../lib/api';
+import {
+  getOrCreateIdentity,
+  wrapIdentityWithPassphrase,
+  unwrapIdentityWithPassphrase,
+  persistIdentity,
+  clearLocalIdentity,
+} from '../lib/chatE2ee';
 
 function normalizeProfilePictureUrl(rawUrl?: string | null) {
   if (!rawUrl) return null;
@@ -119,6 +126,15 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
   });
 
   const [openSection, setOpenSection] = useState<string | null>(initialSection ?? null);
+
+  // E2EE key management state
+  const [keysBusy, setKeysBusy] = useState<'' | 'backup' | 'restore' | 'reset'>('');
+  const [backupPassphrase, setBackupPassphrase] = useState('');
+  const [backupPassphraseConfirm, setBackupPassphraseConfirm] = useState('');
+  const [restorePassphrase, setRestorePassphrase] = useState('');
+  const [hasServerBackup, setHasServerBackup] = useState<boolean>(false);
+  const [backupUpdatedAt, setBackupUpdatedAt] = useState<string | null>(null);
+  const [resetConfirmText, setResetConfirmText] = useState('');
 
   const storedUser = useMemo(() => {
     const raw = localStorage.getItem('secureChatUser');
@@ -334,6 +350,113 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
       setStatus({ type: 'error', message: e.response?.data?.message || 'Could not disable MFA.' });
     } finally {
       setMfaDisableLoading(false);
+    }
+  }
+
+  /* ── E2EE key management ─────────────────────────────────── */
+  useEffect(() => {
+    if (openSection !== 'encryption') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get('/api/chat/keys/backup');
+        if (cancelled) return;
+        const backup = res.data?.backup;
+        setHasServerBackup(Boolean(backup?.ciphertext));
+        setBackupUpdatedAt(backup?.updatedAt || null);
+      } catch {
+        if (!cancelled) setHasServerBackup(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [openSection, api]);
+
+  async function handleBackupKeys(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (backupPassphrase.length < 8) {
+      setStatus({ type: 'error', message: 'Passphrase must be at least 8 characters.' });
+      return;
+    }
+    if (backupPassphrase !== backupPassphraseConfirm) {
+      setStatus({ type: 'error', message: 'Passphrases do not match.' });
+      return;
+    }
+    setKeysBusy('backup');
+    setStatus({ type: '', message: '' });
+    try {
+      const identity = await getOrCreateIdentity();
+      const blob = await wrapIdentityWithPassphrase(identity, backupPassphrase);
+      await api.put('/api/chat/keys/backup', blob);
+      setHasServerBackup(true);
+      setBackupUpdatedAt(new Date().toISOString());
+      setBackupPassphrase('');
+      setBackupPassphraseConfirm('');
+      setStatus({ type: 'success', message: 'Encrypted key backup uploaded. Keep your passphrase safe — we cannot recover it.' });
+    } catch (err: unknown) {
+      const e = err as Error & { response?: { data?: { message?: string } } };
+      setStatus({ type: 'error', message: e.response?.data?.message || e.message || 'Could not back up keys.' });
+    } finally {
+      setKeysBusy('');
+    }
+  }
+
+  async function handleRestoreKeys(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!restorePassphrase) {
+      setStatus({ type: 'error', message: 'Enter your backup passphrase.' });
+      return;
+    }
+    setKeysBusy('restore');
+    setStatus({ type: '', message: '' });
+    try {
+      const res = await api.get('/api/chat/keys/backup');
+      const backup = res.data?.backup;
+      if (!backup?.ciphertext) {
+        throw new Error('No encrypted backup found on the server.');
+      }
+      const identity = await unwrapIdentityWithPassphrase(backup, restorePassphrase);
+      persistIdentity(identity);
+      const latestStoredUser = localStorage.getItem('secureChatUser');
+      const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null;
+      if (latestUser) {
+        localStorage.setItem('secureChatUser', JSON.stringify({
+          ...latestUser,
+          publicKey: identity.publicKey,
+          keyExchangePublicKey: identity.keyExchangePublicKey,
+        }));
+      }
+      setRestorePassphrase('');
+      setStatus({ type: 'success', message: 'Keys restored on this device. Reload the chat to access your encrypted threads.' });
+    } catch (err: unknown) {
+      const e = err as Error & { response?: { data?: { message?: string } } };
+      setStatus({ type: 'error', message: e.response?.data?.message || e.message || 'Could not restore keys.' });
+    } finally {
+      setKeysBusy('');
+    }
+  }
+
+  async function handleResetKeys() {
+    if (resetConfirmText.trim() !== 'RESET') {
+      setStatus({ type: 'error', message: 'Type RESET to confirm key reset.' });
+      return;
+    }
+    setKeysBusy('reset');
+    setStatus({ type: '', message: '' });
+    try {
+      await api.delete('/api/chat/keys/public');
+      clearLocalIdentity();
+      setHasServerBackup(false);
+      setBackupUpdatedAt(null);
+      setResetConfirmText('');
+      setStatus({
+        type: 'success',
+        message: 'E2EE keys reset. Existing chat threads are now unreadable — sign out and sign in again to publish a fresh key.',
+      });
+    } catch (err: unknown) {
+      const e = err as Error & { response?: { data?: { message?: string } } };
+      setStatus({ type: 'error', message: e.response?.data?.message || e.message || 'Could not reset keys.' });
+    } finally {
+      setKeysBusy('');
     }
   }
 
@@ -623,6 +746,117 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
               {passwordSaving ? 'Updating…' : 'Update password'}
             </button>
           </form>
+        </Accordion>
+
+        {/* ── 5. Encryption keys (E2EE backup / restore / reset) ── */}
+        <Accordion
+          id="encryption"
+          label="Encryption keys"
+          icon="🔑"
+          open={openSection === 'encryption'}
+          onToggle={() => toggle('encryption')}
+          badge={hasServerBackup ? 'Backed up' : undefined}
+        >
+          <p className="prof-hint" style={{ marginTop: 0 }}>
+            Your private keys live only on this device. To sign in on another device without
+            losing your encrypted chats, upload a <strong>passphrase-protected backup</strong>.
+            We never see your passphrase — only encrypted blob and KDF parameters travel to the server.
+          </p>
+
+          <form className="prof-form" onSubmit={handleBackupKeys}>
+            <p className="prof-step-title" style={{ marginBottom: '0.25rem' }}>Back up keys to server</p>
+            {hasServerBackup && backupUpdatedAt && (
+              <p className="prof-hint" style={{ marginTop: 0 }}>
+                Existing backup uploaded {new Date(backupUpdatedAt).toLocaleString()}. Uploading a new one replaces it.
+              </p>
+            )}
+            <div className="prof-field-grid">
+              <label className="prof-label">
+                Backup passphrase
+                <input
+                  className="prof-input"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={backupPassphrase}
+                  onChange={(e) => setBackupPassphrase(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="prof-label">
+                Confirm passphrase
+                <input
+                  className="prof-input"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={backupPassphraseConfirm}
+                  onChange={(e) => setBackupPassphraseConfirm(e.target.value)}
+                  required
+                />
+              </label>
+            </div>
+            <p className="prof-hint" style={{ marginTop: '0.25rem' }}>
+              Use at least 8 characters. <strong>If you forget it, your backup is unrecoverable.</strong>
+            </p>
+            <button type="submit" className="prof-save-btn" disabled={keysBusy === 'backup'}>
+              {keysBusy === 'backup' ? 'Encrypting…' : hasServerBackup ? 'Replace backup' : 'Create backup'}
+            </button>
+          </form>
+
+          {hasServerBackup && (
+            <form className="prof-form" onSubmit={handleRestoreKeys} style={{ marginTop: '1rem' }}>
+              <p className="prof-step-title" style={{ marginBottom: '0.25rem' }}>Restore keys on this device</p>
+              <p className="prof-hint" style={{ marginTop: 0 }}>
+                Decrypts the backup and replaces this device's key material. Use when you've signed in fresh
+                and your existing threads show "Failed to decrypt".
+              </p>
+              <label className="prof-label">
+                Backup passphrase
+                <input
+                  className="prof-input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={restorePassphrase}
+                  onChange={(e) => setRestorePassphrase(e.target.value)}
+                  required
+                />
+              </label>
+              <button type="submit" className="prof-save-btn" disabled={keysBusy === 'restore'}>
+                {keysBusy === 'restore' ? 'Restoring…' : 'Restore keys'}
+              </button>
+            </form>
+          )}
+
+          <div className="prof-form" style={{ marginTop: '1rem', borderTop: '1px solid var(--line)', paddingTop: '1rem' }}>
+            <p className="prof-step-title" style={{ color: 'var(--danger)', marginBottom: '0.25rem' }}>
+              Danger zone — reset E2EE keys
+            </p>
+            <p className="prof-hint" style={{ marginTop: 0 }}>
+              Erases your keys on the server AND this device. <strong>All existing chat threads will become
+              permanently unreadable</strong>, even for the other participants. Only use this if your keys are
+              compromised. Type <code>RESET</code> below to confirm.
+            </p>
+            <label className="prof-label">
+              Confirmation
+              <input
+                className="prof-input"
+                type="text"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                placeholder="Type RESET"
+                autoComplete="off"
+              />
+            </label>
+            <button
+              type="button"
+              className="prof-remove-btn"
+              onClick={handleResetKeys}
+              disabled={keysBusy === 'reset' || resetConfirmText.trim() !== 'RESET'}
+            >
+              {keysBusy === 'reset' ? 'Resetting…' : 'Reset encryption keys'}
+            </button>
+          </div>
         </Accordion>
 
       </div>

@@ -1100,8 +1100,12 @@ async function getNotificationSummary(userId) {
     listGroupInvitations(userId),
   ]);
 
+  const messageUnreadCount = messages.reduce((total, item) => total + item.unreadCount, 0);
   return {
-    unreadCount: messages.reduce((total, item) => total + item.unreadCount, 0) + requests.length + invitations.length,
+    unreadCount: messageUnreadCount + requests.length + invitations.length,
+    messageUnreadCount,
+    requestCount: requests.length,
+    invitationCount: invitations.length,
     notifications: {
       messages,
       requests,

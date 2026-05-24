@@ -1,0 +1,27 @@
+{
+  "name": "Shadow Link — Secure Chat",
+  "short_name": "Shadow Link",
+  "description": "End-to-end encrypted messenger with ephemeral messages, authenticator MFA, and verified group chats.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1f30",
+  "theme_color": "#2563eb",
+  "lang": "en",
+  "categories": ["communication", "social", "security"],
+  "icons": [
+    {
+      "src": "/scslogo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/scslogo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

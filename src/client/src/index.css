@@ -11,6 +11,16 @@
   --surface-strong: #ffffff;
   --tag: #f1f6fb;
   --secondary-panel: #eef4fb;
+  /* Brand & semantic accents (shared light/dark) */
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --accent-strong: #1d4ed8;
+  --good: #047857;
+  --good-soft: #d1fae5;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
   --sans: 'IBM Plex Sans', sans-serif;
   --display: 'Sora', sans-serif;
   font-family: var(--sans);
@@ -34,6 +44,16 @@
   --surface-strong: #111827;
   --tag: #1e293b;
   --secondary-panel: #152238;
+  /* High-contrast accent + semantic colors for dark theme */
+  --accent: #60a5fa;
+  --accent-soft: rgba(96, 165, 250, 0.18);
+  --accent-strong: #3b82f6;
+  --good: #6ee7b7;
+  --good-soft: rgba(44, 158, 119, 0.18);
+  --warn: #ffd591;
+  --warn-soft: rgba(191, 139, 45, 0.22);
+  --danger: #fca5a5;
+  --danger-soft: rgba(239, 68, 68, 0.22);
 }
 
 * {

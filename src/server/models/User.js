@@ -89,6 +89,18 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    // Passphrase-wrapped identity backup for multi-device sign-in.
+    // The server stores only ciphertext + KDF params; it cannot read the
+    // private keys without the user-chosen passphrase.
+    encryptedIdentityBackup: {
+      ciphertext: { type: String, default: null },
+      iv: { type: String, default: null },
+      salt: { type: String, default: null },
+      iterations: { type: Number, default: null },
+      algorithm: { type: String, default: null },
+      publicKeyFingerprint: { type: String, default: null },
+      updatedAt: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,

@@ -95,7 +95,12 @@ router.get('/notifications', async (req, res, next) => {
 router.get('/notifications/unread-count', async (req, res, next) => {
   try {
     const summary = await getNotificationSummary(req.user._id);
-    res.json({ unreadCount: summary.unreadCount });
+    res.json({
+      unreadCount: summary.unreadCount,
+      messageUnreadCount: summary.messageUnreadCount,
+      requestCount: summary.requestCount,
+      invitationCount: summary.invitationCount,
+    });
   } catch (error) {
     withStatus(res, error);
     next(error);
@@ -276,11 +281,105 @@ router.put('/keys/public', async (req, res, next) => {
       throw new Error('keyExchangePublicKey is required');
     }
 
+    // Guard against silent key rotation: if a different key is already registered
+    // do NOT overwrite it. All existing threads were encrypted for the current key;
+    // replacing it would make those threads permanently unreadable on any device
+    // that still holds the original private key. The client detects the mismatch
+    // and shows an actionable error instead of silently corrupting decryption.
+    if (req.user.publicKey && req.user.publicKey !== publicKey) {
+      return res.json({ ok: true, skipped: true });
+    }
+
     req.user.publicKey = publicKey;
     req.user.keyExchangePublicKey = keyExchangePublicKey;
     await req.user.save();
 
+    res.json({ ok: true, registered: true });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+// DESTRUCTIVE: forget the current public key + identity backup so the client
+// can publish a fresh key pair. Existing threads encrypted to the old key
+// become unrecoverable — UI must warn the user explicitly.
+router.delete('/keys/public', async (req, res, next) => {
+  try {
+    req.user.publicKey = null;
+    req.user.keyExchangePublicKey = null;
+    req.user.encryptedIdentityBackup = {
+      ciphertext: null,
+      iv: null,
+      salt: null,
+      iterations: null,
+      algorithm: null,
+      publicKeyFingerprint: null,
+      updatedAt: null,
+    };
+    await req.user.save();
+    res.json({ ok: true, reset: true });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+// Multi-device E2EE: upload a passphrase-wrapped identity blob. Server never
+// sees plaintext private keys — only ciphertext + KDF parameters.
+router.put('/keys/backup', async (req, res, next) => {
+  try {
+    const { ciphertext, iv, salt, iterations, algorithm, publicKeyFingerprint } = req.body || {};
+    if (!ciphertext || !iv || !salt || !iterations || !algorithm) {
+      res.status(400);
+      throw new Error('ciphertext, iv, salt, iterations and algorithm are required');
+    }
+    const iterCount = Number(iterations);
+    if (!Number.isFinite(iterCount) || iterCount < 100_000 || iterCount > 5_000_000) {
+      res.status(400);
+      throw new Error('iterations must be between 100,000 and 5,000,000');
+    }
+    // Reject oversized blobs (a 2048-bit RSA key + ECDH key + framing fits well under 8 KB).
+    const maxBytes = 16 * 1024;
+    if (String(ciphertext).length > maxBytes) {
+      res.status(400);
+      throw new Error('Backup blob too large');
+    }
+
+    req.user.encryptedIdentityBackup = {
+      ciphertext: String(ciphertext),
+      iv: String(iv),
+      salt: String(salt),
+      iterations: iterCount,
+      algorithm: String(algorithm),
+      publicKeyFingerprint: publicKeyFingerprint ? String(publicKeyFingerprint) : null,
+      updatedAt: new Date(),
+    };
+    await req.user.save();
     res.json({ ok: true });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+router.get('/keys/backup', async (req, res, next) => {
+  try {
+    const backup = req.user.encryptedIdentityBackup;
+    if (!backup || !backup.ciphertext) {
+      return res.json({ backup: null });
+    }
+    res.json({
+      backup: {
+        ciphertext: backup.ciphertext,
+        iv: backup.iv,
+        salt: backup.salt,
+        iterations: backup.iterations,
+        algorithm: backup.algorithm,
+        publicKeyFingerprint: backup.publicKeyFingerprint,
+        updatedAt: backup.updatedAt,
+      },
+    });
   } catch (error) {
     withStatus(res, error);
     next(error);

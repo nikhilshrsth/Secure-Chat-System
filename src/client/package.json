@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:ci": "npm audit --omit=dev --audit-level=high",
+    "sbom": "npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.json"
   },
   "dependencies": {
     "axios": "^1.16.0",

@@ -448,17 +448,25 @@ function ChatPage() {
         const identity = await getOrCreateIdentity();
         identityRef.current = identity;
         try {
-          await api.put('/api/chat/keys/public', {
+          const keyResp = await api.put('/api/chat/keys/public', {
             publicKey: identity.publicKey,
             keyExchangePublicKey: identity.keyExchangePublicKey,
           });
-          if (currentUser) {
-            localStorage.setItem('secureChatUser', JSON.stringify({
-              ...currentUser,
-              publicKey: identity.publicKey,
-              keyExchangePublicKey: identity.keyExchangePublicKey,
-            }));
+          if (!keyResp.data?.skipped) {
+            // Keys were accepted (first registration or same key re-confirmed).
+            // Update the cached user so the mismatch check in ensureThreadKey()
+            // sees the correct registered public key on subsequent decryptions.
+            if (currentUser) {
+              localStorage.setItem('secureChatUser', JSON.stringify({
+                ...currentUser,
+                publicKey: identity.publicKey,
+                keyExchangePublicKey: identity.keyExchangePublicKey,
+              }));
+            }
           }
+          // If skipped: the server already has a different key registered.
+          // ensureThreadKey() will catch the mismatch and surface the message:
+          // "This browser does not have this account encryption key..."
         } catch {
           // Non-fatal: thread loading continues. Key will be retried next bootstrap.
         }

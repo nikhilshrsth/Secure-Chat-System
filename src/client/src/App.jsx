@@ -13,6 +13,7 @@ const RegisterPage        = lazy(() => import('./pages/register'))
 const PrivacyPage         = lazy(() => import('./pages/privacy'))
 const SecurityPage        = lazy(() => import('./pages/security'))
 const SupportPage         = lazy(() => import('./pages/support'))
+const HomePage            = lazy(() => import('./pages/home'))
 import { createApiClient } from './lib/api'
 import { getOrCreateIdentity } from './lib/chatE2ee'
 import './App.css'
@@ -30,6 +31,7 @@ function App() {
   const [profilePicUrl, setProfilePicUrl] = useState(null)
   const [groupInviteCount, setGroupInviteCount] = useState(0)
   const [notificationCount, setNotificationCount] = useState(0)
+  const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const notificationSocketRef = useRef(null)
   const locationRef = useRef(location)
   const userMenuRef = useRef(null)
@@ -37,6 +39,7 @@ function App() {
   const currentUser = storedUser ? JSON.parse(storedUser) : null
   const isAdmin = currentUser?.role === 'admin'
   const isPublicInfoPage = ['/privacy', '/security', '/support'].includes(location.pathname)
+  const isLandingPage = location.pathname === '/'
 
   // Keep locationRef current so socket callbacks have access without stale closures.
   useEffect(() => { locationRef.current = location }, [location])
@@ -55,6 +58,7 @@ function App() {
   const refreshNotificationCount = useCallback(async () => {
     if (!token || isAdmin) {
       setNotificationCount(0)
+      setMessageUnreadCount(0)
       return
     }
 
@@ -62,6 +66,7 @@ function App() {
       const api = createApiClient()
       const response = await api.get('/api/chat/notifications/unread-count')
       setNotificationCount(Number(response.data?.unreadCount || 0))
+      setMessageUnreadCount(Number(response.data?.messageUnreadCount || 0))
     } catch {
       // Non-fatal: realtime events and route visits will retry.
     }
@@ -144,10 +149,17 @@ function App() {
         const latestStoredUser = localStorage.getItem('secureChatUser')
         const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null
         const api = createApiClient()
-        await api.put('/api/chat/keys/public', {
+        const keyResp = await api.put('/api/chat/keys/public', {
           publicKey: identity.publicKey,
           keyExchangePublicKey: identity.keyExchangePublicKey,
         })
+        // Server rejects silent rotation: if it skipped the update, the stored
+        // public key already belongs to another device. Do NOT overwrite the
+        // cached user record with our local key — chat.tsx will surface the
+        // mismatch and offer the restore-from-backup flow.
+        if (keyResp.data?.skipped) {
+          return
+        }
         if (latestUser) {
           localStorage.setItem('secureChatUser', JSON.stringify({
             ...latestUser,
@@ -232,6 +244,14 @@ function App() {
     setNavOpen(false)
   }
 
+  if (!token && isLandingPage) {
+    return (
+      <Suspense fallback={null}>
+        <HomePage />
+      </Suspense>
+    )
+  }
+
   if (!token && isPublicInfoPage) {
     return (
       <main className="public-info-shell">
@@ -297,6 +317,11 @@ function App() {
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                     </svg>
                     <span className="nav-link-label">Chat</span>
+                    {messageUnreadCount > 0 && (
+                      <span className="nav-badge nav-badge--inline" aria-label={`${messageUnreadCount} unread messages`}>
+                        {messageUnreadCount > 99 ? '99+' : messageUnreadCount}
+                      </span>
+                    )}
                   </NavLink>
                 )}
                 {isAdmin && (
@@ -400,6 +425,10 @@ function App() {
                         <span aria-hidden="true" className="user-menu-icon">🔐</span>
                         Security &amp; Password
                       </button>
+                      <button type="button" className="user-menu-item" role="menuitem" onClick={() => openProfileAt('encryption')}>
+                        <span aria-hidden="true" className="user-menu-icon">🔑</span>
+                        Encryption keys
+                      </button>
                       <div className="user-menu-divider" />
                       <button
                         type="button"
@@ -484,6 +513,7 @@ function App() {
         <div className="app-page">
           <Suspense fallback={null}>
             <Routes>
+              <Route path="/" element={<Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />} />
               <Route path="/dashboard" element={isAdmin ? <Navigate to="/admin" replace /> : <CustomerDashboardPage />} />
               <Route path="/friends" element={isAdmin ? <Navigate to="/admin" replace /> : <FriendsPage />} />
               <Route path="/groups" element={isAdmin ? <Navigate to="/admin" replace /> : <GroupsPage />} />
