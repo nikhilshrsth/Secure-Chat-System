@@ -100,7 +100,7 @@ function CustomerDashboardPage() {
       {/* ── hero ─────────────────────────────────── */}
       <header className="dash-hero">
         <div className="dash-hero-text">
-          <p className="brand-kicker">ShadowLink</p>
+          <p className="brand-kicker">Shadow Link</p>
           <h2>{greeting}{currentUser?.username ? `, ${currentUser.username}` : ''} 👋</h2>
           <p className="dash-hero-sub">Your end-to-end encrypted workspace is ready.</p>
         </div>
