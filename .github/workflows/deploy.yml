@@ -1,0 +1,136 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Serialise deploys — a new push waits for the current deploy to finish.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Build & verify (mirrors the security workflow's gate) ─────────────
+  ci:
+    name: Build & verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            src/client/package-lock.json
+            src/server/package-lock.json
+
+      - name: Install client deps
+        working-directory: src/client
+        run: npm ci
+
+      - name: Lint
+        working-directory: src/client
+        run: npm run lint
+
+      - name: Build client
+        working-directory: src/client
+        run: npm run build
+
+      - name: Install server deps
+        working-directory: src/server
+        run: npm ci
+
+      - name: Server tests
+        working-directory: src/server
+        run: npm test --if-present
+
+      - name: Audit (prod deps, high+ severity)
+        run: |
+          cd src/client && npm run audit:ci || echo "::warning::client audit found issues"
+          cd ../server  && npm run audit:ci || echo "::warning::server audit found issues"
+
+  # ── 2. Deploy via SSH ────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to production
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://${{ secrets.DEPLOY_HOST }}
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:        ${{ secrets.DEPLOY_HOST }}
+          username:    ${{ secrets.DEPLOY_USER }}
+          key:         ${{ secrets.DEPLOY_SSH_KEY }}
+          port:        ${{ secrets.DEPLOY_PORT || 22 }}
+          script_stop: true
+          # GITHUB_REF_NAME is injected by appleboy/ssh-action from the workflow env.
+          envs:        GITHUB_REF_NAME
+          script: |
+            set -euo pipefail
+
+            APP_ROOT="/var/www/Secure-Chat-System"
+            SERVER_DIR="$APP_ROOT/src/server"
+            CLIENT_DIR="$APP_ROOT/src/client"
+            PM2_NAME="scs-backend"
+            BRANCH="${GITHUB_REF_NAME:-main}"
+
+            echo "── Pull latest code [$BRANCH] ──────────────────────────"
+            cd "$APP_ROOT"
+            git fetch --all --prune
+            git reset --hard "origin/$BRANCH"
+
+            echo "── Server dependencies (prod only) ─────────────────────"
+            cd "$SERVER_DIR"
+            npm ci --omit=dev
+
+            echo "── Client build ────────────────────────────────────────"
+            cd "$CLIENT_DIR"
+            npm ci
+            npm run build
+            # dist/ is now at /var/www/Secure-Chat-System/src/client/dist/
+            # nginx root should point to that directory.
+
+            echo "── Reload PM2 ──────────────────────────────────────────"
+            cd "$SERVER_DIR"
+            if pm2 describe "$PM2_NAME" > /dev/null 2>&1; then
+              pm2 reload "$PM2_NAME" --update-env
+            else
+              pm2 start server.js --name "$PM2_NAME" --update-env
+            fi
+            pm2 save
+
+            echo "── Reload nginx (graceful) ─────────────────────────────"
+            sudo -n nginx -t && sudo -n systemctl reload nginx
+
+            echo "── Done ────────────────────────────────────────────────"
+            pm2 jlist | python3 -c "
+            import sys, json
+            procs = json.load(sys.stdin)
+            for p in procs:
+                if p['name'] == '$PM2_NAME':
+                    s = p.get('pm2_env', {})
+                    print(f\"  {p['name']}  status={s.get('status')}  restarts={s.get('restart_time')}  uptime={s.get('pm_uptime')}\")
+            "
+
+      # ── 3. Smoke test the health endpoint ──────────────────────────────
+      - name: Health check
+        run: |
+          set -e
+          URL="https://${{ secrets.DEPLOY_HOST }}/api/health"
+          echo "Probing $URL …"
+          for i in $(seq 1 6); do
+            code=$(curl -fsSL -o /dev/null -w "%{http_code}" "$URL" 2>/dev/null || true)
+            echo "  attempt $i → HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 5
+          done
+          echo "Health check failed after 6 attempts."
+          exit 1
