@@ -1,6 +1,9 @@
 const express = require('express');
 
 const User = require('../models/User');
+const ChatThread = require('../models/ChatThread');
+const Message = require('../models/Message');
+const ChatRequest = require('../models/ChatRequest');
 const { sendEmail } = require('../services/emailOtpService')
 const { protect } = require('../middleware/authMiddleware');
 const {
@@ -340,8 +343,18 @@ router.get('/keys/public/me', async (req, res, next) => {
 // DESTRUCTIVE: forget the current public key + identity backup so the client
 // can publish a fresh key pair. Existing threads encrypted to the old key
 // become unrecoverable — UI must warn the user explicitly.
+//
+// When called with `?purgeChats=true` (or `{ purgeChats: true }` in body) the
+// server ALSO removes every direct thread, message and chat request this user
+// participates in, and detaches them from group threads. This is the only way
+// to get back to a clean, usable state when the local identity has been lost
+// (no backup) — otherwise the user's thread list keeps surfacing decryption
+// errors for old threads whose keys were encrypted to the lost private key.
 router.delete('/keys/public', async (req, res, next) => {
   try {
+    const purgeChats = String(req.query?.purgeChats ?? req.body?.purgeChats ?? '') === 'true';
+    const userId = req.user._id;
+
     req.user.publicKey = null;
     req.user.keyExchangePublicKey = null;
     req.user.encryptedIdentityBackup = {
@@ -354,7 +367,50 @@ router.delete('/keys/public', async (req, res, next) => {
       updatedAt: null,
     };
     await req.user.save();
-    res.json({ ok: true, reset: true });
+
+    let purgeStats = null;
+    if (purgeChats) {
+      // 1) Find direct threads this user participates in — delete them
+      //    entirely (no other participant can decrypt the user's copy of the
+      //    thread key anyway after reset, and the user can't decrypt theirs).
+      const directThreads = await ChatThread.find({
+        threadType: 'direct',
+        participantIds: userId,
+      }).select('_id').lean();
+      const directThreadIds = directThreads.map((thread) => thread._id);
+
+      let directMessages = 0;
+      let directThreadsRemoved = 0;
+      if (directThreadIds.length) {
+        directMessages = (await Message.deleteMany({ threadId: { $in: directThreadIds } })).deletedCount || 0;
+        directThreadsRemoved = (await ChatThread.deleteMany({ _id: { $in: directThreadIds } })).deletedCount || 0;
+      }
+
+      // 2) Detach from group threads (do not delete — other members may still
+      //    have a working thread key for themselves).
+      const groupDetach = await ChatThread.updateMany(
+        { threadType: 'group', participantIds: userId },
+        { $pull: { participantIds: userId } },
+      );
+
+      // 3) Remove the user's own messages in any remaining (group) thread.
+      const ownMessages = (await Message.deleteMany({ sender: userId })).deletedCount || 0;
+
+      // 4) Remove all chat requests where this user is requester or recipient.
+      const requests = (await ChatRequest.deleteMany({
+        $or: [{ requesterId: userId }, { recipientId: userId }],
+      })).deletedCount || 0;
+
+      purgeStats = {
+        directThreadsRemoved,
+        directMessagesRemoved: directMessages,
+        groupThreadsDetached: groupDetach.modifiedCount || 0,
+        ownMessagesRemoved: ownMessages,
+        chatRequestsRemoved: requests,
+      };
+    }
+
+    res.json({ ok: true, reset: true, purged: Boolean(purgeChats), purgeStats });
   } catch (error) {
     withStatus(res, error);
     next(error);

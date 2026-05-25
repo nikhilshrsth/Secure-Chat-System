@@ -389,6 +389,30 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
         || Object.keys(identity.keyExchangePrivateKeyJwk).length === 0) {
         throw new Error('This browser does not have the encryption keys for this account. Open the chat page once to publish your keys, then try again.');
       }
+
+      // Verify the local identity matches the server-registered keys *before*
+      // uploading a backup. Backing up keys that the server never accepted
+      // (because another browser had already published a different pair)
+      // produces a backup that is useless on restore — every "decrypt thread
+      // key" attempt will keep failing with an ECDH operation error.
+      const meResp = await api.get('/api/chat/keys/public/me');
+      const serverPublic: string | null = meResp.data?.publicKey || null;
+      const serverEcdh: string | null = meResp.data?.keyExchangePublicKey || null;
+      if (serverPublic && serverPublic !== identity.publicKey) {
+        throw new Error(
+          'This browser\'s encryption keys do not match the keys registered on the server for your account. '
+          + 'Backing up these keys would produce a useless backup. Sign in from the browser that originally '
+          + 'activated secure chat (or restore a valid backup) and create the backup from there.',
+        );
+      }
+      if (serverEcdh && serverEcdh !== identity.keyExchangePublicKey) {
+        throw new Error(
+          'This browser\'s key-exchange key does not match the key-exchange key registered on the server. '
+          + 'Backing up now would produce a useless backup. Use the original browser, restore a valid backup, '
+          + 'or reset the account chat key (you will lose access to existing encrypted threads).',
+        );
+      }
+
       const blob = await wrapIdentityWithPassphrase(identity, backupPassphrase);
       await api.put('/api/chat/keys/backup', blob);
       setHasServerBackup(true);
@@ -419,6 +443,32 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
         throw new Error('No encrypted backup found on the server.');
       }
       const identity = await unwrapIdentityWithPassphrase(backup, restorePassphrase);
+
+      // Verify the restored identity actually matches what the server has on
+      // file for this account. If a backup was uploaded from a browser whose
+      // keys never won the publish race, restoring it just reinstates the
+      // wrong keys and the "operation-specific reason" ECDH error keeps
+      // coming back. Detect that here instead of silently overwriting the
+      // working local identity (if any).
+      const meResp = await api.get('/api/chat/keys/public/me');
+      const serverPublic: string | null = meResp.data?.publicKey || null;
+      const serverEcdh: string | null = meResp.data?.keyExchangePublicKey || null;
+      if (serverPublic && serverPublic !== identity.publicKey) {
+        throw new Error(
+          'The restored backup does not match the encryption keys the server has registered for your account. '
+          + 'This backup was likely created from a different browser whose keys were never accepted by the server. '
+          + 'Use the browser that originally activated secure chat to create a fresh backup, or reset the account '
+          + 'chat key (you will lose access to existing encrypted threads).',
+        );
+      }
+      if (serverEcdh && serverEcdh !== identity.keyExchangePublicKey) {
+        throw new Error(
+          'The restored backup\'s key-exchange key does not match the one registered on the server. '
+          + 'This backup is from the wrong browser/device. Create a backup from the device that originally '
+          + 'activated secure chat, or reset the account chat key.',
+        );
+      }
+
       persistIdentity(identity);
       const latestStoredUser = localStorage.getItem('secureChatUser');
       const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null;
@@ -447,14 +497,34 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
     setKeysBusy('reset');
     setStatus({ type: '', message: '' });
     try {
-      await api.delete('/api/chat/keys/public');
+      // purgeChats=true so the server also wipes the user's direct threads,
+      // their messages, and their chat requests. Without that, after reset
+      // the thread list keeps showing broken (undecryptable) old threads
+      // and the user cannot start fresh "smoothly".
+      await api.delete('/api/chat/keys/public', { params: { purgeChats: 'true' } });
       clearLocalIdentity();
+
+      // Strip the cached publicKey / keyExchangePublicKey from the locally
+      // stored user record. The chat page's bootstrap reads this to detect
+      // mismatches; if we leave the old keys here, the very next page load
+      // will compare them against a freshly generated identity and falsely
+      // re-trigger the recovery banner.
+      try {
+        const raw = localStorage.getItem('secureChatUser');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          delete parsed.publicKey;
+          delete parsed.keyExchangePublicKey;
+          localStorage.setItem('secureChatUser', JSON.stringify(parsed));
+        }
+      } catch { /* non-fatal */ }
+
       setHasServerBackup(false);
       setBackupUpdatedAt(null);
       setResetConfirmText('');
       setStatus({
         type: 'success',
-        message: 'E2EE keys reset. Existing chat threads are now unreadable — sign out and sign in again to publish a fresh key.',
+        message: 'E2EE keys reset and old encrypted chats purged. Reload the page to publish a fresh key and start clean.',
       });
     } catch (err: unknown) {
       const e = err as Error & { response?: { data?: { message?: string } } };

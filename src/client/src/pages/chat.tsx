@@ -207,8 +207,49 @@ function ChatPage() {
   const [requesting, setRequesting] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [status, setStatus] = useState({ type: '', message: '' });
+  const [keyRecoveryNeeded, setKeyRecoveryNeeded] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
+
+  async function performInPlaceReset() {
+    if (resetBusy) return;
+    const confirmed = window.confirm(
+      'Reset chat encryption?\n\n'
+      + 'This will permanently delete every encrypted chat thread, message and '
+      + 'request that involves your account, and publish a fresh encryption key '
+      + 'from this browser. Other participants will no longer see your side of '
+      + 'past direct conversations.\n\n'
+      + 'This action cannot be undone.',
+    );
+    if (!confirmed) return;
+    setResetBusy(true);
+    setStatus({ type: '', message: 'Resetting encryption and clearing old encrypted chats…' });
+    try {
+      await api.delete('/api/chat/keys/public', { params: { purgeChats: 'true' } });
+
+      // Wipe the local identity + cached server public keys so the next page
+      // load generates a fresh pair and publishes it cleanly.
+      try {
+        const rawUser = localStorage.getItem('secureChatUser');
+        const userId = rawUser ? String(JSON.parse(rawUser)?.id || '') : '';
+        if (userId) localStorage.removeItem(`secureChatE2EEIdentityV1:${userId}`);
+        localStorage.removeItem('secureChatE2EEIdentityV1');
+        if (rawUser) {
+          const parsed = JSON.parse(rawUser);
+          delete parsed.publicKey;
+          delete parsed.keyExchangePublicKey;
+          localStorage.setItem('secureChatUser', JSON.stringify(parsed));
+        }
+      } catch { /* non-fatal */ }
+
+      window.location.reload();
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ message?: string }>;
+      setStatus({ type: 'error', message: axiosError.response?.data?.message || 'Could not reset encryption.' });
+      setResetBusy(false);
+    }
+  }
 
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;
@@ -501,6 +542,7 @@ function ChatPage() {
               keyExchangePublicKey: serverKeys.keyExchangePublicKey,
             }));
           }
+          setKeyRecoveryNeeded(true);
           setStatus({ type: 'error', message: KEY_RECOVERY_MESSAGE });
           // Still load the thread list so the user can see their conversations,
           // but message decryption will fail with the recovery message above.
@@ -516,6 +558,7 @@ function ChatPage() {
         }
 
         if (isLegacyIdentityMissingKeyExchange(identity)) {
+          setKeyRecoveryNeeded(true);
           setStatus({ type: 'error', message: KEY_RECOVERY_MESSAGE });
           await refreshThreads(searchParams.get('thread') || '');
           return;
@@ -534,6 +577,7 @@ function ChatPage() {
             }));
           }
           if (keyResp.data?.skipped) {
+            setKeyRecoveryNeeded(true);
             setStatus({ type: 'error', message: KEY_RECOVERY_MESSAGE });
             await refreshThreads(searchParams.get('thread') || '');
             return;
@@ -1075,7 +1119,24 @@ function ChatPage() {
         )}
 
         {loading && <p className="status">Loading secure chat...</p>}
-        {status.message && <p className={`status ${status.type}`}>{status.message}</p>}
+        {keyRecoveryNeeded && (
+          <div className="status error" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <strong>Encryption keys for this account are missing on this browser.</strong>
+            <span>{KEY_RECOVERY_MESSAGE}</span>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <a className="button secondary" href="/profile?section=encryption">Open Profile → Restore backup</a>
+              <button
+                type="button"
+                className="button"
+                disabled={resetBusy}
+                onClick={performInPlaceReset}
+              >
+                {resetBusy ? 'Resetting…' : 'Reset & start fresh (deletes old chats)'}
+              </button>
+            </div>
+          </div>
+        )}
+        {status.message && !keyRecoveryNeeded && <p className={`status ${status.type}`}>{status.message}</p>}
       </main>
     </section>
   );
