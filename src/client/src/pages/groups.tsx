@@ -6,6 +6,8 @@ import {
   encryptThreadKeyForUser,
   generateThreadKeyRaw,
   getOrCreateIdentity,
+  isLegacyIdentityMissingKeyExchange,
+  migrateLegacyIdentityWithKeyExchange,
 } from '../lib/chatE2ee';
 
 type ThreadParticipant = {
@@ -156,11 +158,28 @@ function GroupsPage() {
     (async () => {
       setLoading(true);
       try {
-        const identity = await getOrCreateIdentity();
-        await api.put('/api/chat/keys/public', {
-          publicKey: identity.publicKey,
-          keyExchangePublicKey: identity.keyExchangePublicKey,
-        });
+        let identity = await getOrCreateIdentity();
+        // Legacy RSA-only identity: only safe to attach a fresh ECDH key when
+        // the server has none on file. Otherwise we would silently corrupt
+        // decryption of every existing thread (see chatE2ee.ts notes).
+        if (isLegacyIdentityMissingKeyExchange(identity)) {
+          let serverHasEcdh = false;
+          try {
+            const meResp = await api.get('/api/chat/keys/public/me');
+            serverHasEcdh = Boolean(meResp.data?.keyExchangePublicKey);
+          } catch {
+            serverHasEcdh = true; // fail closed
+          }
+          if (!serverHasEcdh) {
+            identity = await migrateLegacyIdentityWithKeyExchange(identity);
+          }
+        }
+        if (!isLegacyIdentityMissingKeyExchange(identity)) {
+          await api.put('/api/chat/keys/public', {
+            publicKey: identity.publicKey,
+            keyExchangePublicKey: identity.keyExchangePublicKey,
+          });
+        }
         await Promise.all([refreshGroups(), refreshUsers(), refreshInvitations()]);
       } catch (error: unknown) {
         const axiosError = error as AxiosError<{ message?: string }>;
@@ -187,6 +206,9 @@ function GroupsPage() {
 
     try {
       const identity = await getOrCreateIdentity();
+      if (isLegacyIdentityMissingKeyExchange(identity)) {
+        throw new Error('This browser does not have the encryption keys for this account. Restore your identity backup from the Profile page before creating a group.');
+      }
       const threadKey = await generateThreadKeyRaw();
       const participants = [
         {

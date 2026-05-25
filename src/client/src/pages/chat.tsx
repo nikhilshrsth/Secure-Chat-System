@@ -10,7 +10,11 @@ import {
   encryptThreadKeyForUser,
   generateThreadKeyRaw,
   getOrCreateIdentity,
+  isLegacyIdentityMissingKeyExchange,
+  migrateLegacyIdentityWithKeyExchange,
 } from '../lib/chatE2ee';
+
+const KEY_RECOVERY_MESSAGE = 'This browser does not have the encryption keys for this account. Restore your identity backup from the Profile page, sign in from the browser that activated secure chat for this account, or reset the account chat key (you will lose access to existing encrypted threads).';
 
 type ThreadParticipant = {
   id: string;
@@ -217,6 +221,13 @@ function ChatPage() {
     const identity = identityRef.current;
     if (!identity) throw new Error('Encryption identity not initialized');
 
+    // Defensive: if the local identity does not have an ECDH key but the
+    // server already does, decryption will fail with a low-level WebCrypto
+    // error. Surface the actionable recovery message up front.
+    if (isLegacyIdentityMissingKeyExchange(identity)) {
+      throw new Error(KEY_RECOVERY_MESSAGE);
+    }
+
     const response = await api.get(`/api/chat/threads/${threadId}/key`);
     const encryptedKey = String(response.data?.encryptedKey || '');
     if (!encryptedKey) throw new Error('No encrypted key available for this thread');
@@ -225,8 +236,11 @@ function ChatPage() {
     try {
       threadKey = await decryptThreadKeyForUser(encryptedKey, identity);
     } catch (error) {
-      if (currentUser?.publicKey && currentUser.publicKey !== identity.publicKey) {
-        throw new Error('This browser does not have this account encryption key. Sign in from the browser that activated secure chat for this account, or reset the account chat key.');
+      const rsaMismatch = currentUser?.publicKey && currentUser.publicKey !== identity.publicKey;
+      const ecdhMismatch = currentUser?.keyExchangePublicKey
+        && currentUser.keyExchangePublicKey !== identity.keyExchangePublicKey;
+      if (rsaMismatch || ecdhMismatch) {
+        throw new Error(KEY_RECOVERY_MESSAGE);
       }
       throw error;
     }
@@ -445,28 +459,85 @@ function ChatPage() {
     async function bootstrap() {
       setLoading(true);
       try {
-        const identity = await getOrCreateIdentity();
+        let identity = await getOrCreateIdentity();
         identityRef.current = identity;
+
+        // Reconcile the on-device identity with the server before touching
+        // any thread keys. The server is the source of truth — if we publish
+        // mismatched keys we corrupt decryption for every other device that
+        // already has the original keys.
+        let serverKeys: { publicKey: string | null; keyExchangePublicKey: string | null } = {
+          publicKey: null,
+          keyExchangePublicKey: null,
+        };
+        try {
+          const meResp = await api.get('/api/chat/keys/public/me');
+          serverKeys = {
+            publicKey: meResp.data?.publicKey || null,
+            keyExchangePublicKey: meResp.data?.keyExchangePublicKey || null,
+          };
+        } catch {
+          // Treat as unknown server state — fall back to the previous "try to
+          // register and rely on server guard" behaviour.
+        }
+
+        const rsaMismatch = Boolean(
+          serverKeys.publicKey && serverKeys.publicKey !== identity.publicKey,
+        );
+        const ecdhMismatch = Boolean(
+          serverKeys.keyExchangePublicKey
+          && !isLegacyIdentityMissingKeyExchange(identity)
+          && serverKeys.keyExchangePublicKey !== identity.keyExchangePublicKey,
+        );
+
+        if (rsaMismatch || ecdhMismatch) {
+          // Cache the server-registered keys so ensureThreadKey()'s mismatch
+          // detection is accurate, then stop — the recovery message will be
+          // shown when the user tries to open a thread.
+          if (currentUser) {
+            localStorage.setItem('secureChatUser', JSON.stringify({
+              ...currentUser,
+              publicKey: serverKeys.publicKey,
+              keyExchangePublicKey: serverKeys.keyExchangePublicKey,
+            }));
+          }
+          setStatus({ type: 'error', message: KEY_RECOVERY_MESSAGE });
+          // Still load the thread list so the user can see their conversations,
+          // but message decryption will fail with the recovery message above.
+          await refreshThreads(searchParams.get('thread') || '');
+          return;
+        }
+
+        // Safe to migrate a legacy RSA-only identity when the server has no
+        // ECDH key registered yet.
+        if (isLegacyIdentityMissingKeyExchange(identity) && !serverKeys.keyExchangePublicKey) {
+          identity = await migrateLegacyIdentityWithKeyExchange(identity);
+          identityRef.current = identity;
+        }
+
+        if (isLegacyIdentityMissingKeyExchange(identity)) {
+          setStatus({ type: 'error', message: KEY_RECOVERY_MESSAGE });
+          await refreshThreads(searchParams.get('thread') || '');
+          return;
+        }
+
         try {
           const keyResp = await api.put('/api/chat/keys/public', {
             publicKey: identity.publicKey,
             keyExchangePublicKey: identity.keyExchangePublicKey,
           });
-          if (!keyResp.data?.skipped) {
-            // Keys were accepted (first registration or same key re-confirmed).
-            // Update the cached user so the mismatch check in ensureThreadKey()
-            // sees the correct registered public key on subsequent decryptions.
-            if (currentUser) {
-              localStorage.setItem('secureChatUser', JSON.stringify({
-                ...currentUser,
-                publicKey: identity.publicKey,
-                keyExchangePublicKey: identity.keyExchangePublicKey,
-              }));
-            }
+          if (!keyResp.data?.skipped && currentUser) {
+            localStorage.setItem('secureChatUser', JSON.stringify({
+              ...currentUser,
+              publicKey: identity.publicKey,
+              keyExchangePublicKey: identity.keyExchangePublicKey,
+            }));
           }
-          // If skipped: the server already has a different key registered.
-          // ensureThreadKey() will catch the mismatch and surface the message:
-          // "This browser does not have this account encryption key..."
+          if (keyResp.data?.skipped) {
+            setStatus({ type: 'error', message: KEY_RECOVERY_MESSAGE });
+            await refreshThreads(searchParams.get('thread') || '');
+            return;
+          }
         } catch {
           // Non-fatal: thread loading continues. Key will be retried next bootstrap.
         }

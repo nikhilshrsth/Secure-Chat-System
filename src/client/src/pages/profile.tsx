@@ -385,6 +385,10 @@ function ProfilePage({ onThemeChange, initialSection }: { onThemeChange: (theme:
     setStatus({ type: '', message: '' });
     try {
       const identity = await getOrCreateIdentity();
+      if (!identity.keyExchangePublicKey || !identity.keyExchangePrivateKeyJwk
+        || Object.keys(identity.keyExchangePrivateKeyJwk).length === 0) {
+        throw new Error('This browser does not have the encryption keys for this account. Open the chat page once to publish your keys, then try again.');
+      }
       const blob = await wrapIdentityWithPassphrase(identity, backupPassphrase);
       await api.put('/api/chat/keys/backup', blob);
       setHasServerBackup(true);

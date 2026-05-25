@@ -15,7 +15,7 @@ const SecurityPage        = lazy(() => import('./pages/security'))
 const SupportPage         = lazy(() => import('./pages/support'))
 const HomePage            = lazy(() => import('./pages/home'))
 import { createApiClient } from './lib/api'
-import { getOrCreateIdentity } from './lib/chatE2ee'
+import { getOrCreateIdentity, isLegacyIdentityMissingKeyExchange, migrateLegacyIdentityWithKeyExchange } from './lib/chatE2ee'
 import './App.css'
 import Footer from "./components/Footer"
 
@@ -137,29 +137,74 @@ function App() {
     return () => window.removeEventListener('securechat-profile-pic-changed', onPicChanged)
   }, [])
 
-  // After login, eagerly generate the user's E2EE identity and publish their
-  // public key so other customers can immediately send first-contact requests.
+  // After login, eagerly publish the user's E2EE public keys so other customers
+  // can immediately send first-contact requests. The flow:
+  //   1. Load (or generate) the local identity.
+  //   2. Query the server for the keys it has on file for this user.
+  //   3. If the server is empty for either key, register the local keys.
+  //      For a legacy RSA-only identity we generate ECDH material ONLY when
+  //      the server also has no ECDH key — otherwise rotating would corrupt
+  //      decryption for every existing thread.
+  //   4. If the server already has a DIFFERENT key, do nothing — the chat
+  //      page surfaces the mismatch and offers restore-from-backup / reset.
   useEffect(() => {
     if (!token) return
     let cancelled = false
     ;(async () => {
       try {
-        const identity = await getOrCreateIdentity()
+        let identity = await getOrCreateIdentity()
         if (cancelled) return
-        const latestStoredUser = localStorage.getItem('secureChatUser')
-        const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null
         const api = createApiClient()
+
+        let serverKeys = { publicKey: null, keyExchangePublicKey: null }
+        try {
+          const resp = await api.get('/api/chat/keys/public/me')
+          serverKeys = {
+            publicKey: resp.data?.publicKey || null,
+            keyExchangePublicKey: resp.data?.keyExchangePublicKey || null,
+          }
+        } catch {
+          // If we cannot fetch server state we defer the decision to the
+          // chat page, which retries during its own bootstrap.
+          return
+        }
+        if (cancelled) return
+
+        // RSA mismatch — another device owns the account's identity. Surface
+        // the mismatch on the chat page; never overwrite cached user keys.
+        if (serverKeys.publicKey && serverKeys.publicKey !== identity.publicKey) {
+          return
+        }
+
+        // Safe migration: legacy identity AND server has no ECDH key yet.
+        if (isLegacyIdentityMissingKeyExchange(identity) && !serverKeys.keyExchangePublicKey) {
+          identity = await migrateLegacyIdentityWithKeyExchange(identity)
+          if (cancelled) return
+        }
+
+        // Cannot migrate: server has an ECDH key registered by another device
+        // and we lack the matching private key. Bail out — the chat page
+        // shows the restore-from-backup prompt.
+        if (isLegacyIdentityMissingKeyExchange(identity)) {
+          return
+        }
+
+        // ECDH mismatch — another device registered a different ECDH key.
+        if (serverKeys.keyExchangePublicKey
+          && serverKeys.keyExchangePublicKey !== identity.keyExchangePublicKey) {
+          return
+        }
+
         const keyResp = await api.put('/api/chat/keys/public', {
           publicKey: identity.publicKey,
           keyExchangePublicKey: identity.keyExchangePublicKey,
         })
-        // Server rejects silent rotation: if it skipped the update, the stored
-        // public key already belongs to another device. Do NOT overwrite the
-        // cached user record with our local key — chat.tsx will surface the
-        // mismatch and offer the restore-from-backup flow.
         if (keyResp.data?.skipped) {
           return
         }
+
+        const latestStoredUser = localStorage.getItem('secureChatUser')
+        const latestUser = latestStoredUser ? JSON.parse(latestStoredUser) : null
         if (latestUser) {
           localStorage.setItem('secureChatUser', JSON.stringify({
             ...latestUser,

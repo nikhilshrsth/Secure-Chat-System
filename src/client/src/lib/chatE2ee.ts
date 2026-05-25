@@ -77,7 +77,7 @@ async function generateKeyExchangeIdentity(): Promise<Pick<StoredIdentity, 'keyE
   };
 }
 
-export async function getOrCreateIdentity(): Promise<StoredIdentity> {
+function getIdentityStorageKey(): { storageKey: string; legacyKey: string } {
   const rawUser = localStorage.getItem('secureChatUser');
   let userId = '';
   try {
@@ -85,8 +85,15 @@ export async function getOrCreateIdentity(): Promise<StoredIdentity> {
   } catch (_error) {
     userId = '';
   }
-  const storageKey = userId ? `${IDENTITY_STORAGE_KEY}:${userId}` : IDENTITY_STORAGE_KEY;
-  const storedRaw = localStorage.getItem(storageKey) || (userId ? localStorage.getItem(IDENTITY_STORAGE_KEY) : null);
+  return {
+    storageKey: userId ? `${IDENTITY_STORAGE_KEY}:${userId}` : IDENTITY_STORAGE_KEY,
+    legacyKey: IDENTITY_STORAGE_KEY,
+  };
+}
+
+export async function getOrCreateIdentity(): Promise<StoredIdentity> {
+  const { storageKey, legacyKey } = getIdentityStorageKey();
+  const storedRaw = localStorage.getItem(storageKey) || (storageKey !== legacyKey ? localStorage.getItem(legacyKey) : null);
   if (storedRaw) {
     try {
       const parsed = JSON.parse(storedRaw) as Partial<StoredIdentity>;
@@ -97,19 +104,23 @@ export async function getOrCreateIdentity(): Promise<StoredIdentity> {
         && parsed.keyExchangePrivateKeyJwk
       ) {
         localStorage.setItem(storageKey, JSON.stringify(parsed));
-        return parsed;
+        return parsed as StoredIdentity;
       }
 
+      // Legacy identity: RSA only, no ECDH key-exchange pair. We CANNOT silently
+      // generate a fresh ECDH pair here — doing so would replace the key the
+      // server may already have on file (published by another device) and make
+      // every existing thread permanently undecryptable on this browser. The
+      // bootstrap layer must call `migrateLegacyIdentityWithKeyExchange()`
+      // explicitly, but only after confirming via `GET /api/chat/keys/public/me`
+      // that the server has NO ECDH key registered yet.
       if (parsed.publicKey && parsed.privateKeyJwk) {
-        const keyExchangeIdentity = await generateKeyExchangeIdentity();
-        const migrated = {
+        return {
           publicKey: parsed.publicKey,
           privateKeyJwk: parsed.privateKeyJwk,
-          ...keyExchangeIdentity,
-        } satisfies StoredIdentity;
-
-        localStorage.setItem(storageKey, JSON.stringify(migrated));
-        return migrated;
+          keyExchangePublicKey: '',
+          keyExchangePrivateKeyJwk: {} as JsonWebKey,
+        };
       }
     } catch (_error) {
       localStorage.removeItem(storageKey);
@@ -119,6 +130,35 @@ export async function getOrCreateIdentity(): Promise<StoredIdentity> {
   const generated = await generateIdentity();
   localStorage.setItem(storageKey, JSON.stringify(generated));
   return generated;
+}
+
+/**
+ * True when an identity was loaded from localStorage but is missing its ECDH
+ * key-exchange pair (legacy RSA-only blob). Callers must coordinate with the
+ * server before adding ECDH keys — see `migrateLegacyIdentityWithKeyExchange`.
+ */
+export function isLegacyIdentityMissingKeyExchange(identity: StoredIdentity): boolean {
+  return !identity.keyExchangePublicKey
+    || !identity.keyExchangePrivateKeyJwk
+    || Object.keys(identity.keyExchangePrivateKeyJwk).length === 0;
+}
+
+/**
+ * Generate ECDH key-exchange material for an existing legacy identity and
+ * persist it. ONLY call this when the server has no `keyExchangePublicKey`
+ * registered yet — otherwise the new ECDH key will not match what other
+ * participants used to encrypt past thread keys to this user.
+ */
+export async function migrateLegacyIdentityWithKeyExchange(identity: StoredIdentity): Promise<StoredIdentity> {
+  const keyExchangeIdentity = await generateKeyExchangeIdentity();
+  const migrated: StoredIdentity = {
+    publicKey: identity.publicKey,
+    privateKeyJwk: identity.privateKeyJwk,
+    ...keyExchangeIdentity,
+  };
+  const { storageKey } = getIdentityStorageKey();
+  localStorage.setItem(storageKey, JSON.stringify(migrated));
+  return migrated;
 }
 
 async function importPublicKey(base64Key: string): Promise<CryptoKey> {

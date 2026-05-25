@@ -281,13 +281,31 @@ router.put('/keys/public', async (req, res, next) => {
       throw new Error('keyExchangePublicKey is required');
     }
 
-    // Guard against silent key rotation: if a different key is already registered
-    // do NOT overwrite it. All existing threads were encrypted for the current key;
-    // replacing it would make those threads permanently unreadable on any device
-    // that still holds the original private key. The client detects the mismatch
-    // and shows an actionable error instead of silently corrupting decryption.
+    // Guard against silent key rotation. Both the RSA identity key and the
+    // ECDH key-exchange key must be guarded: rotating EITHER one makes every
+    // existing thread permanently unreadable on every other device that still
+    // holds the previous private key (RSA used by legacy thread keys, ECDH
+    // used by current scheme). The client must explicitly call
+    // `DELETE /api/chat/keys/public` (after warning the user) before being
+    // allowed to publish a fresh pair.
     if (req.user.publicKey && req.user.publicKey !== publicKey) {
-      return res.json({ ok: true, skipped: true });
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: 'publicKey-mismatch',
+        serverPublicKey: req.user.publicKey,
+        serverKeyExchangePublicKey: req.user.keyExchangePublicKey || null,
+      });
+    }
+
+    if (req.user.keyExchangePublicKey && req.user.keyExchangePublicKey !== keyExchangePublicKey) {
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: 'keyExchangePublicKey-mismatch',
+        serverPublicKey: req.user.publicKey,
+        serverKeyExchangePublicKey: req.user.keyExchangePublicKey,
+      });
     }
 
     req.user.publicKey = publicKey;
@@ -295,6 +313,24 @@ router.put('/keys/public', async (req, res, next) => {
     await req.user.save();
 
     res.json({ ok: true, registered: true });
+  } catch (error) {
+    withStatus(res, error);
+    next(error);
+  }
+});
+
+// Return the public keys the server currently has on file for the caller.
+// The client uses this to detect mismatches between the on-device identity
+// and the server-registered identity *before* attempting to decrypt thread
+// keys — so the UI can route to the restore-from-backup flow instead of
+// surfacing a low-level WebCrypto failure.
+router.get('/keys/public/me', async (req, res, next) => {
+  try {
+    res.json({
+      publicKey: req.user.publicKey || null,
+      keyExchangePublicKey: req.user.keyExchangePublicKey || null,
+      hasBackup: Boolean(req.user.encryptedIdentityBackup?.ciphertext),
+    });
   } catch (error) {
     withStatus(res, error);
     next(error);
