@@ -531,7 +531,7 @@ function AdminDashboardPage() {
           <input value={systemLogSearch} onChange={(event) => setSystemLogSearch(event.target.value)} placeholder="Search logs" />
           <button type="button" className="secondary" onClick={() => refreshSystemLogs()}>Search</button>
         </div>
-        <Table rows={data.systemLogs} columns={['id', 'eventType', 'userId', 'ipAddress', 'timestamp', 'description', 'severity']} dateKeys={['timestamp']} />
+        <Table rows={data.systemLogs} columns={['id', 'eventType', 'userId', 'ipAddress', 'timestamp', 'severity']} dateKeys={['timestamp']} />
       </>
     );
   }

@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
 # Serialise deploys — a new push waits for the current deploy to finish.
